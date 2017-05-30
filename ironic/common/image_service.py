@@ -263,7 +263,7 @@ protocol_mapping = {
 }
 
 
-def get_image_service(image_href, client=None, version=1, context=None):
+def get_image_service(image_href, client=None, version=2, context=None):
     """Get image service instance to download the image.
 
     :param image_href: String containing href to get image service for.
