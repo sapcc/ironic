@@ -15,7 +15,7 @@
 #    under the License.
 
 from oslo_config import cfg
-
+import os
 from ironic.common.i18n import _
 
 opts = [
