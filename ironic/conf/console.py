@@ -15,7 +15,7 @@
 #    under the License.
 
 from oslo_config import cfg
-
+import os
 from ironic.common.i18n import _
 
 opts = [
@@ -39,6 +39,15 @@ opts = [
                default=10,
                help=_('Time (in seconds) to wait for the console subprocess '
                       'to start.')),
+    cfg.IntOpt('socket_gid',
+               default=os.getgid(),
+               help=_('The group id of a potentially created socket')),
+    cfg.StrOpt('socket_permission',
+               default="0500",
+               help=_('Permissions of created unix sockets (octal)')),
+    cfg.StrOpt('terminal_url_scheme',
+               default="%(scheme)s://%(host)s:%(port)s",
+               help=_('Url to the proxy')),
 ]
 
 

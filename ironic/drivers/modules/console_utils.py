@@ -74,6 +74,14 @@ def _get_console_pid_file(node_uuid):
     path = os.path.join(pid_dir, name)
     return path
 
+def _get_console_unix_socket(node_uuid):
+    """Generate the unix socket file name."""
+
+    pid_dir = _get_console_pid_dir()
+    name = "%s.sock" % node_uuid
+    path = os.path.join(pid_dir, name)
+    return path
+
 
 def _get_console_pid(node_uuid):
     """Get the terminal process id from pid file."""
@@ -127,7 +135,7 @@ def make_persistent_password_file(path, password):
         raise exception.PasswordFileFailedToCreate(error=e)
 
 
-def get_shellinabox_console_url(port):
+def get_shellinabox_console_url(port, uuid=None):
     """Get a url to access the console via shellinaboxd.
 
     :param port: the terminal port for the node.
@@ -137,10 +145,11 @@ def get_shellinabox_console_url(port):
     if netutils.is_valid_ipv6(console_host):
         console_host = '[%s]' % console_host
     scheme = 'https' if CONF.console.terminal_cert_dir else 'http'
-    return '%(scheme)s://%(host)s:%(port)s' % {'scheme': scheme,
-                                               'host': console_host,
-                                               'port': port}
 
+    return CONF.console.terminal_url_scheme % {'scheme': scheme,
+                                               'host': console_host,
+                                               'port': port,
+                                               'uuid': uuid}
 
 def start_shellinabox_console(node_uuid, port, console_cmd):
     """Open the serial console for a node.
@@ -171,8 +180,18 @@ def start_shellinabox_console(node_uuid, port, console_cmd):
         args.append(CONF.console.terminal_cert_dir)
     else:
         args.append("-t")
-    args.append("-p")
-    args.append(str(port))
+
+    if port == 'unix' or port is None:
+        args.append('--unixdomain-only')
+        args.append(('%(path)s:%(uid)s:%(gid)s:%(mode)s' % {
+            'path': _get_console_unix_socket(node_uuid),
+            'uid': os.getuid(),
+            'gid': CONF.console.socket_gid,
+            'mode': CONF.console.socket_permission }))
+    else:
+        args.append("-p")
+        args.append(str(port))
+
     args.append("--background=%s" % pid_file)
     args.append("-s")
     args.append(console_cmd)

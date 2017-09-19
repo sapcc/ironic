@@ -659,5 +659,5 @@ class ShellinaboxConsole(base.ConsoleInterface):
         """
 
         driver_info = _parse_driver_info(task.node)
-        url = console_utils.get_shellinabox_console_url(driver_info['port'])
+        url = console_utils.get_shellinabox_console_url(driver_info['port'], uuid=task.node.uuid)
         return {'type': 'shellinabox', 'url': url}
