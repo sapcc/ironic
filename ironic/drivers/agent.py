@@ -25,6 +25,7 @@ from ironic.drivers.modules import inspector
 from ironic.drivers.modules import pxe
 from ironic.drivers.modules.ucs import management as ucs_mgmt
 from ironic.drivers.modules.ucs import power as ucs_power
+from ironic.drivers.modules.ucs import console as ucs_console
 
 
 # For backward compatibility
@@ -52,6 +53,7 @@ class AgentAndUcsDriver(base.BaseDriver):
         self.boot = pxe.PXEBoot()
         self.deploy = agent.AgentDeploy()
         self.management = ucs_mgmt.UcsManagement()
+        self.console = ucs_console.UcsShellInaboxConsole()
         self.inspect = inspector.Inspector.create_if_enabled(
             'AgentAndUcsDriver')
 
