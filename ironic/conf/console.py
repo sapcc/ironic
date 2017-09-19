@@ -48,6 +48,9 @@ opts = [
     cfg.StrOpt('terminal_url_scheme',
                default="%(scheme)s://%(host)s:%(port)s",
                help=_('Url to the proxy')),
+    cfg.StrOpt('ssh_command_pattern',
+               default="sshpass -f %(pw_file)s ssh -l %(username)s %(address)s",
+               help=_('Command pattern to establish a ssh connection')),
 ]
 
 

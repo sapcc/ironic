@@ -30,6 +30,7 @@ from ironic.drivers.modules import pxe
 from ironic.drivers.modules import ssh
 from ironic.drivers.modules.ucs import management as ucs_mgmt
 from ironic.drivers.modules.ucs import power as ucs_power
+from ironic.drivers.modules.ucs import console as ucs_console
 from ironic.drivers.modules import virtualbox
 from ironic.drivers.modules import wol
 from ironic.drivers import utils
@@ -220,6 +221,7 @@ class AgentAndUcsDriver(base.BaseDriver):
         self.deploy = agent.AgentDeploy()
         self.management = ucs_mgmt.UcsManagement()
         self.vendor = agent.AgentVendorInterface()
+        self.console = ucs_console.UcsShellInaboxConsole()
         self.inspect = inspector.Inspector.create_if_enabled(
             'AgentAndUcsDriver')
 
