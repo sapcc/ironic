@@ -20,11 +20,14 @@ Ironic console utilities.
 """
 
 import errno
+import hashlib
 import os
 import signal
 import subprocess
 import time
 
+from base64 import urlsafe_b64encode
+from datetime import datetime, timedelta
 from ironic_lib import utils as ironic_utils
 from oslo_log import log as logging
 from oslo_service import loopingcall
@@ -133,14 +136,35 @@ def get_shellinabox_console_url(port):
     :param port: the terminal port for the node.
     """
 
+    digest = None
+    expiry = None
+    if CONF.console.url_auth_digest_secret:
+        try:
+            hash_algorithm, digest_algorithm = CONF.console.url_auth_digest_algorithm.split(':', 1)
+            h = hashlib.new(hash_algorithm)
+            expiry = int((datetime.utcnow() - datetime(1970,1,1) + timedelta(seconds=CONF.console.url_auth_digest_expiry)).total_seconds())
+            to_sign = CONF.console.url_auth_digest_pattern % {
+                'uuid': uuid,
+                'expiry': expiry,
+                'secret': CONF.console.url_auth_digest_secret }
+            h.update(to_sign)
+            if digest_algorithm == 'base64':
+                digest = urlsafe_b64encode(h.digest())
+            else:
+                digest = h.hexdigest()
+        except ValueError, e:
+            LOG.warning(_LW("Could not setup authenticated url due to %s"), e)
+
     console_host = CONF.my_ip
     if netutils.is_valid_ipv6(console_host):
         console_host = '[%s]' % console_host
     scheme = 'https' if CONF.console.terminal_cert_dir else 'http'
-    return '%(scheme)s://%(host)s:%(port)s' % {'scheme': scheme,
+    return CONF.console.terminal_url_scheme % {'scheme': scheme,
                                                'host': console_host,
-                                               'port': port}
-
+                                               'port': port,
+                                               'uuid': uuid,
+                                               'digest': digest,
+                                               'expiry': expiry }
 
 def start_shellinabox_console(node_uuid, port, console_cmd):
     """Open the serial console for a node.
