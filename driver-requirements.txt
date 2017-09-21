@@ -11,7 +11,7 @@ python-ironic-inspector-client>=1.5.0
 python-oneviewclient<3.0.0,>=2.5.1
 python-scciclient>=0.4.0
 python-seamicroclient>=0.4.0
-UcsSdk==0.8.2.2
+git+https://github.com/sapcc/UcsPythonSDK.git#egg=UcsSdk
 python-dracclient>=0.1.0
 
 # The amt driver imports a python module called "pywsman", but this does not
