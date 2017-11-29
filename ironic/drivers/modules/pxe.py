@@ -97,7 +97,7 @@ def _get_instance_image_info(node, ctx):
     labels = ('kernel', 'ramdisk')
     d_info = deploy_utils.get_image_instance_info(node)
     if not (i_info.get('kernel') and i_info.get('ramdisk')):
-        glance_service = service.GlanceImageService(version=1, context=ctx)
+        glance_service = service.GlanceImageService(version=CONF.glance.swift_api_version, context=ctx)
         iproperties = glance_service.show(d_info['image_source'])['properties']
         for label in labels:
             i_info[label] = str(iproperties[label + '_id'])
@@ -139,9 +139,9 @@ def _build_deploy_pxe_options(task, pxe_info):
         if CONF.pxe.ipxe_enabled:
             image_href = pxe_info[label][0]
             if (CONF.pxe.ipxe_use_swift and
-                service_utils.is_glance_image(image_href)):
-                    pxe_opts[option] = images.get_temp_url_for_glance_image(
-                        task.context, image_href)
+                    service_utils.is_glance_image(image_href)):
+                pxe_opts[option] = images.get_temp_url_for_glance_image(
+                    task.context, image_href)
             else:
                 pxe_opts[option] = '/'.join([CONF.deploy.http_url, node.uuid,
                                             label])

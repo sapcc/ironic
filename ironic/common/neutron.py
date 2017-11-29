@@ -23,14 +23,9 @@ LOG = log.getLogger(__name__)
 
 DEFAULT_NEUTRON_URL = 'http://%s:9696' % CONF.my_ip
 
-_NEUTRON_SESSION = None
-
 
 def _get_neutron_session():
-    global _NEUTRON_SESSION
-    if not _NEUTRON_SESSION:
-        _NEUTRON_SESSION = keystone.get_session('neutron')
-    return _NEUTRON_SESSION
+    return keystone.get_session('neutron')
 
 
 def get_client(token=None):

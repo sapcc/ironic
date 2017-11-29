@@ -105,7 +105,6 @@ opts = [
                        "local HTTP server. "
                        "Applicable only when 'ipxe_enabled' option is "
                        "set to true.")),
-
 ]
 
 

@@ -32,9 +32,9 @@ OLD_SESSION_OPTS = {
 cfg.CONF.import_group(LEGACY_SECTION, 'keystonemiddleware.auth_token')
 
 
-def load_auth(conf, group):
+def load_auth(conf, group, **kwargs):
     try:
-        auth = kaloading.load_auth_from_conf_options(conf, group)
+        auth = kaloading.load_auth_from_conf_options(conf, group, **kwargs)
     except kaexception.MissingRequiredOptions:
         auth = None
     return auth

@@ -36,17 +36,12 @@ client = importutils.try_import('ironic_inspector_client')
 
 INSPECTOR_API_VERSION = (1, 0)
 
-_INSPECTOR_SESSION = None
-
 
 def _get_inspector_session():
     if CONF.auth_strategy != 'keystone':
         return
 
-    global _INSPECTOR_SESSION
-    if not _INSPECTOR_SESSION:
-        _INSPECTOR_SESSION = keystone.get_session('inspector')
-    return _INSPECTOR_SESSION
+    return keystone.get_session('inspector')
 
 
 def _get_client():

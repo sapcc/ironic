@@ -35,14 +35,9 @@ from ironic.conf import CONF
 
 IMAGE_CHUNK_SIZE = 1024 * 1024  # 1mb
 
-_GLANCE_SESSION = None
-
 
 def _get_glance_session():
-    global _GLANCE_SESSION
-    if not _GLANCE_SESSION:
-        _GLANCE_SESSION = keystone.get_session('glance')
-    return _GLANCE_SESSION
+    return keystone.get_session('glance')
 
 
 def import_versioned_module(version, submodule=None):

@@ -84,14 +84,9 @@ warn_about_unsafe_shred_parameters()
 # All functions are called from deploy() directly or indirectly.
 # They are split for stub-out.
 
-_IRONIC_SESSION = None
-
 
 def _get_ironic_session():
-    global _IRONIC_SESSION
-    if not _IRONIC_SESSION:
-        _IRONIC_SESSION = keystone.get_session('service_catalog')
-    return _IRONIC_SESSION
+    return keystone.get_session('service_catalog')
 
 
 def get_ironic_api_url():

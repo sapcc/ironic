@@ -25,6 +25,10 @@ from ironic.common.i18n import _, _LE
 from ironic.conf import auth as ironic_auth
 from ironic.conf import CONF
 
+try:
+    import functools32 as functools
+except ImportError:
+    import functools
 
 LOG = logging.getLogger(__name__)
 
@@ -68,10 +72,10 @@ def ks_exceptions(f):
             raise exception.KeystoneFailure(six.text_type(e))
     return wrapper
 
-
+@functools.lru_cache(maxsize=32)
 @ks_exceptions
-def get_session(group):
-    auth = ironic_auth.load_auth(CONF, group) or _get_legacy_auth()
+def get_session(group, **kwargs):
+    auth = ironic_auth.load_auth(CONF, group, **kwargs) or _get_legacy_auth()
     if not auth:
         msg = _("Failed to load auth from either [%(new)s] or [%(old)s] "
                 "config sections.")

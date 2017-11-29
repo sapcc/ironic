@@ -43,3 +43,4 @@ oslo.versionedobjects>=1.13.0 # Apache-2.0
 jsonschema!=2.5.0,<3.0.0,>=2.0.0 # MIT
 psutil<2.0.0,>=1.1.1 # BSD
 futurist!=0.15.0,>=0.11.0 # Apache-2.0
+functools32;python_version=='2.7' # PSF license

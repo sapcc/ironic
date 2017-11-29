@@ -15,6 +15,8 @@
 #    under the License.
 
 import six
+from base64 import urlsafe_b64encode
+from os import urandom
 from six.moves import http_client
 from six.moves.urllib import parse
 from swiftclient import client as swift_client
@@ -27,23 +29,17 @@ from ironic.common import keystone
 from ironic.conf import CONF
 
 
-_SWIFT_SESSION = None
-
-
-def _get_swift_session():
-    global _SWIFT_SESSION
-    if not _SWIFT_SESSION:
-        _SWIFT_SESSION = keystone.get_session('swift')
-    return _SWIFT_SESSION
+def _get_swift_session(**session_args):
+    return keystone.get_session('swift', **session_args)
 
 
 class SwiftAPI(object):
     """API for communicating with Swift."""
 
-    def __init__(self):
+    def __init__(self, **session_args):
         # TODO(pas-ha): swiftclient does not support keystone sessions ATM.
         # Must be reworked when LP bug #1518938 is fixed.
-        session = _get_swift_session()
+        session = _get_swift_session(**session_args)
         params = {
             'retries': CONF.swift.swift_max_retries,
             'preauthurl': keystone.get_service_url(
@@ -104,16 +100,10 @@ class SwiftAPI(object):
         :returns: The temp url for the object.
         :raises: SwiftOperationError, if any operation with Swift fails.
         """
-        try:
-            account_info = self.connection.head_account()
-        except swift_exceptions.ClientException as e:
-            operation = _("head account")
-            raise exception.SwiftOperationError(operation=operation,
-                                                error=e)
+        temp_url_key = self._get_temp_url_key()
 
         parse_result = parse.urlparse(self.connection.url)
         swift_object_path = '/'.join((parse_result.path, container, object))
-        temp_url_key = account_info['x-account-meta-temp-url-key']
         url_path = swift_utils.generate_temp_url(swift_object_path, timeout,
                                                  temp_url_key, 'GET')
         return parse.urlunparse((parse_result.scheme,
@@ -122,6 +112,27 @@ class SwiftAPI(object):
                                  None,
                                  None,
                                  None))
+
+    def _get_temp_url_key(self):
+        try:
+            account_info = self.connection.head_account()
+        except swift_exceptions.ClientException as e:
+            operation = _("head account")
+            raise exception.SwiftOperationError(operation=operation,
+                                                error=e)
+
+        temp_url_key = account_info.get('x-account-meta-temp-url-key', None)
+
+        if temp_url_key:
+            return temp_url_key
+
+        if CONF.swift.swift_set_temp_url_key:
+            temp_url_key = urlsafe_b64encode(urandom(30))
+            self.connection.post_account(headers={'x-account-meta-temp-url-key': temp_url_key})
+            return temp_url_key
+
+        operation = _("get temp-url-key")
+        raise exception.SwiftTempUrlKeyNotFoundError(operation=operation)
 
     def delete_object(self, container, object):
         """Deletes the given Swift object.
