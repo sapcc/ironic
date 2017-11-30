@@ -28,15 +28,14 @@ from oslo_log import log as logging
 from oslo_utils import excutils
 import six
 
+from ironic.conf import CONF
 from ironic.common import exception
 from ironic.common.i18n import _, _LE, _LW
 from ironic.common import raid
 
 LOG = logging.getLogger(__name__)
 
-RAID_CONFIG_SCHEMA = os.path.join(os.path.dirname(__file__),
-                                  'raid_config_schema.json')
-
+RAID_CONFIG_SCHEMA = os.path.join(CONF.pybasedir, 'drivers', 'raid_config_schema.json')
 
 @six.add_metaclass(abc.ABCMeta)
 class BaseDriver(object):
