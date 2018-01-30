@@ -159,7 +159,7 @@ class GlanceImageService(base_image_service.BaseImageService,
                     'The given image info does not have a valid direct_url property: %s')
                                             % image_info)
 
-            swift = SwiftAPI(project_id=image_info['owner'])
+            swift = SwiftAPI(container_project_id=image_info['owner'])
             return swift.get_temp_url(container=container_id, object=object_id,
                                       timeout=CONF.glance.swift_temp_url_duration)
 

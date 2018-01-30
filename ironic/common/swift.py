@@ -37,14 +37,20 @@ class SwiftAPI(object):
     """API for communicating with Swift."""
 
     def __init__(self, **session_args):
+        container_project_id = session_args.pop('container_project_id', None)
         # TODO(pas-ha): swiftclient does not support keystone sessions ATM.
         # Must be reworked when LP bug #1518938 is fixed.
         session = _get_swift_session(**session_args)
+        preauthurl = keystone.get_service_url( session,
+                                               service_type='object-store')
+        session_project_id = session.get_project_id()
+
+        if container_project_id and preauthurl.endswith(session_project_id):
+            preauthurl = preauthurl.replace(session_project_id, container_project_id)
+
         params = {
             'retries': CONF.swift.swift_max_retries,
-            'preauthurl': keystone.get_service_url(
-                session,
-                service_type='object-store'),
+            'preauthurl': preauthurl,
             'preauthtoken': keystone.get_admin_auth_token(session)
         }
         # NOTE(pas-ha):session.verify is for HTTPS urls and can be
