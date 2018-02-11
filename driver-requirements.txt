@@ -10,7 +10,7 @@ pysnmp
 python-ironic-inspector-client>=1.5.0
 python-oneviewclient<3.0.0,>=2.5.2
 python-scciclient>=0.4.0
-UcsSdk==0.8.2.2
+git+https://github.com/sapcc/UcsPythonSDK.git#egg=UcsSdk
 python-dracclient>=0.1.0
 
 # The CIMC drivers use the Cisco IMC SDK version 0.7.2 or greater
