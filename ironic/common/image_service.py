@@ -35,28 +35,25 @@ from ironic.conf import CONF
 
 IMAGE_CHUNK_SIZE = 1024 * 1024  # 1mb
 
-_GLANCE_SESSION = None
-
 
 def _get_glance_session():
-    global _GLANCE_SESSION
-    if not _GLANCE_SESSION:
-        auth = keystone.get_auth('glance')
-        _GLANCE_SESSION = keystone.get_session('glance', auth=auth)
-    return _GLANCE_SESSION
+    return keystone.get_session('glance')
 
 
-def GlanceImageService(client=None, version=None, context=None):
-    module_str = 'ironic.common.glance_service'
-    if version is None:
-        version = CONF.glance.glance_api_version
+def import_versioned_module(version, submodule=None):
+    module = 'ironic.common.glance_service.v%s' % version
+    if submodule:
+        module = '.'.join((module, submodule))
+    return importutils.try_import(module)
 
-    module = importutils.import_versioned_module(module_str, version,
-                                                 'image_service')
+
+def GlanceImageService(client=None, version=1, context=None):
+    module = import_versioned_module(version, 'image_service')
     service_class = getattr(module, 'GlanceImageService')
     if (context is not None and CONF.glance.auth_strategy == 'keystone'
         and not context.auth_token):
-            context.auth_token = _get_glance_session().get_token()
+            session = _get_glance_session()
+            context.auth_token = keystone.get_admin_auth_token(session)
     return service_class(client, version, context)
 
 
@@ -264,7 +261,7 @@ protocol_mapping = {
 }
 
 
-def get_image_service(image_href, client=None, version=None, context=None):
+def get_image_service(image_href, client=None, version=2, context=None):
     """Get image service instance to download the image.
 
     :param image_href: String containing href to get image service for.

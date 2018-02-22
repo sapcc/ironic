@@ -71,16 +71,10 @@ DISK_LAYOUT_PARAMS = ('root_gb', 'swap_mb', 'ephemeral_gb')
 # All functions are called from deploy() directly or indirectly.
 # They are split for stub-out.
 
-_IRONIC_SESSION = None
 
 
 def _get_ironic_session():
-    global _IRONIC_SESSION
-    if not _IRONIC_SESSION:
-        auth = keystone.get_auth('service_catalog')
-        _IRONIC_SESSION = keystone.get_session('service_catalog',
-                                               auth=auth)
-    return _IRONIC_SESSION
+    return keystone.get_session('service_catalog')
 
 
 def _wrap_ipv6(ip):

@@ -105,7 +105,7 @@ def _get_instance_image_info(node, ctx):
     d_info = deploy_utils.get_image_instance_info(node)
     if not (i_info.get('kernel') and i_info.get('ramdisk')):
         glance_service = service.GlanceImageService(
-            version=CONF.glance.glance_api_version, context=ctx)
+            version=CONF.glance.swift_api_version, context=ctx)
         iproperties = glance_service.show(d_info['image_source'])['properties']
         for label in labels:
             i_info[label] = str(iproperties[label + '_id'])

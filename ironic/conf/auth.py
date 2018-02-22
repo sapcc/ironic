@@ -14,11 +14,20 @@
 
 import copy
 
+from keystoneauth1 import exceptions as kaexception
 from keystoneauth1 import loading as kaloading
 from oslo_log import log
 
 
 LOG = log.getLogger(__name__)
+
+
+def load_auth(conf, group, **kwargs):
+    try:
+        auth = kaloading.load_auth_from_conf_options(conf, group, **kwargs)
+    except kaexception.MissingRequiredOptions:
+        auth = None
+    return auth
 
 
 def register_auth_opts(conf, group):

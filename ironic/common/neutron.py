@@ -24,7 +24,6 @@ LOG = log.getLogger(__name__)
 
 DEFAULT_NEUTRON_URL = 'http://%s:9696' % CONF.my_ip
 
-_NEUTRON_SESSION = None
 
 PHYSNET_PARAM_NAME = 'provider:physical_network'
 """Name of the neutron network API physical network parameter."""
@@ -34,11 +33,7 @@ SEGMENTS_PARAM_NAME = 'segments'
 
 
 def _get_neutron_session():
-    global _NEUTRON_SESSION
-    if not _NEUTRON_SESSION:
-        auth = keystone.get_auth('neutron')
-        _NEUTRON_SESSION = keystone.get_session('neutron', auth=auth)
-    return _NEUTRON_SESSION
+    return keystone.get_session('neutron')    
 
 
 def get_client(token=None):

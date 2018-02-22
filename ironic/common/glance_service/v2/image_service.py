@@ -17,6 +17,7 @@ import collections
 import time
 
 from oslo_utils import uuidutils
+from oslo_log import log as logging
 from six.moves.urllib import parse as urlparse
 from swiftclient import utils as swift_utils
 
@@ -24,8 +25,11 @@ from ironic.common import exception as exc
 from ironic.common.glance_service import base_image_service
 from ironic.common.glance_service import service
 from ironic.common.glance_service import service_utils
+from ironic.common.swift import SwiftAPI
 from ironic.common.i18n import _
 from ironic.conf import CONF
+
+LOG = logging.getLogger(__name__)
 
 TempUrlCacheElement = collections.namedtuple('TempUrlCacheElement',
                                              ['url', 'url_expires_at'])
@@ -44,11 +48,26 @@ class GlanceImageService(base_image_service.BaseImageService,
     # }
     _cache = {}
 
+    def detail(self, **kwargs):
+        return self._detail(method='list', **kwargs)
+
     def show(self, image_id):
         return self._show(image_id, method='get')
 
     def download(self, image_id, data=None):
         return self._download(image_id, method='data', data=data)
+
+    def create(self, image_meta, data=None):
+        image_id = self._create(image_meta, method='create', data=None)['id']
+        return self.update(image_id, None, data)
+
+    def update(self, image_id, image_meta, data=None, purge_props=False):
+        # NOTE(ghe): purge_props not working until bug 1206472 solved
+        return self._update(image_id, image_meta, data, method='update',
+                            purge_props=False)
+
+    def delete(self, image_id):
+        return self._delete(image_id, method='delete')
 
     def _generate_temp_url(self, path, seconds, key, method, endpoint,
                            image_id):
@@ -124,15 +143,36 @@ class GlanceImageService(base_image_service.BaseImageService,
 
         image_id = image_info['id']
 
+        if CONF.glance.swift_store_multi_tenant:
+            LOG.debug("Getting temp-url for multi-tenant setup")
+            direct_url = image_info['properties'].get('direct_url')
+
+            chunks = urlparse.urlsplit(direct_url) if direct_url else None
+            container_id = object_id = None
+            if chunks and chunks.path:
+                parts = chunks.path.strip('/').split('/')
+                if len(parts) == 2:
+                    container_id, object_id = parts
+
+            if not container_id or not object_id:
+                raise exc.ImageUnacceptable(_(
+                    'The given image info does not have a valid direct_url property: %s')
+                                            % image_info)
+
+            swift = SwiftAPI(container_project_id=image_info['owner'])
+            return swift.get_temp_url(container=container_id, object=object_id,
+                                      timeout=CONF.glance.swift_temp_url_duration)
+
         url_fragments = {
             'api_version': CONF.glance.swift_api_version,
             'account': CONF.glance.swift_account,
             'container': self._get_swift_container(image_id),
+            'endpoint_url': CONF.glance.swift_endpoint_url,
             'object_id': image_id
         }
 
         endpoint_url = CONF.glance.swift_endpoint_url
-        if CONF.deploy.object_store_endpoint_type == 'radosgw':
+        if CONF.glance.temp_url_endpoint_type == 'radosgw':
             chunks = urlparse.urlsplit(CONF.glance.swift_endpoint_url)
             if not chunks.path:
                 endpoint_url = urlparse.urljoin(
@@ -149,6 +189,7 @@ class GlanceImageService(base_image_service.BaseImageService,
 
         url_path = template.format(**url_fragments)
 
+
         return self._generate_temp_url(
             path=url_path,
             seconds=CONF.glance.swift_temp_url_duration,
@@ -160,7 +201,7 @@ class GlanceImageService(base_image_service.BaseImageService,
 
     def _validate_temp_url_config(self):
         """Validate the required settings for a temporary URL."""
-        if not CONF.glance.swift_temp_url_key:
+        if not CONF.glance.swift_temp_url_key and not CONF.glance.swift_store_multi_tenant:
             raise exc.MissingParameterValue(_(
                 'Swift temporary URLs require a shared secret to be created. '
                 'You must provide "swift_temp_url_key" as a config option.'))
@@ -168,8 +209,8 @@ class GlanceImageService(base_image_service.BaseImageService,
             raise exc.MissingParameterValue(_(
                 'Swift temporary URLs require a Swift endpoint URL. '
                 'You must provide "swift_endpoint_url" as a config option.'))
-        if (not CONF.glance.swift_account and
-                CONF.deploy.object_store_endpoint_type == 'swift'):
+        if (not CONF.glance.swift_account and not CONF.glance.swift_store_multi_tenant and
+                CONF.glance.temp_url_endpoint_type == 'swift'):
             raise exc.MissingParameterValue(_(
                 'Swift temporary URLs require a Swift account string. '
                 'You must provide "swift_account" as a config option.'))

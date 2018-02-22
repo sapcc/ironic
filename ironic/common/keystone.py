@@ -22,6 +22,10 @@ import six
 from ironic.common import exception
 from ironic.conf import CONF
 
+try:
+    import functools32 as functools
+except ImportError:
+    import functools
 
 LOG = logging.getLogger(__name__)
 
@@ -49,8 +53,9 @@ def ks_exceptions(f):
     return wrapper
 
 
+@functools.lru_cache(maxsize=32)
 @ks_exceptions
-def get_session(group, **session_kwargs):
+def get_session(group, **kwargs):
     """Loads session object from options in a configuration file section.
 
     The session_kwargs will be passed directly to keystoneauth1 Session
@@ -60,8 +65,46 @@ def get_session(group, **session_kwargs):
     :param group: name of the config section to load session options from
 
     """
-    return kaloading.load_session_from_conf_options(
-        CONF, group, **session_kwargs)
+    auth = ironic_auth.load_auth(CONF, group, **kwargs) or _get_legacy_auth()
+    if not auth:
+        msg = _("Failed to load auth from either [%(new)s] or [%(old)s] "
+                "config sections.")
+        raise exception.ConfigInvalid(message=msg, new=group,
+                                      old=ironic_auth.LEGACY_SECTION)
+    session = kaloading.load_session_from_conf_options(
+        CONF, group, auth=auth)
+    return session
+
+
+# FIXME(pas-ha) remove legacy path after deprecation
+def _get_legacy_auth():
+    """Load auth from keystone_authtoken config section
+
+    Used only to provide backward compatibility with old configs.
+    """
+    conf = getattr(CONF, ironic_auth.LEGACY_SECTION)
+    # NOTE(pas-ha) first try to load auth from legacy section
+    # using the new keystoneauth options that might be already set there
+    auth = ironic_auth.load_auth(CONF, ironic_auth.LEGACY_SECTION)
+    if auth:
+        return auth
+    # NOTE(pas-ha) now we surely have legacy config section for auth
+    # and with legacy options set in it, deal with it.
+    legacy_loader = kaloading.get_plugin_loader('password')
+    auth_params = {
+        'auth_url': conf.auth_uri,
+        'username': conf.admin_user,
+        'password': conf.admin_password,
+        'tenant_name': conf.admin_tenant_name
+    }
+    api_v3 = _is_apiv3(conf.auth_uri, conf.auth_version)
+    if api_v3:
+        # NOTE(pas-ha): mimic defaults of keystoneclient
+        auth_params.update({
+            'project_domain_id': 'default',
+            'user_domain_id': 'default',
+        })
+    return legacy_loader.load_from_options(**auth_params)
 
 
 @ks_exceptions
