@@ -130,7 +130,7 @@ class InspectHardwareTestCase(BaseTestCase):
         self.assertEqual(states.INSPECTING,
                          self.driver.inspect.inspect_hardware(self.task))
         mock_init.assert_called_once_with(
-            session=None,
+            session=mock.sentinel.session,
             api_version=self.api_version,
             inspector_url=None)
         mock_introspect.assert_called_once_with(self.node.uuid)
@@ -214,7 +214,7 @@ class CheckStatusTestCase(BaseTestCase):
         mock_get.return_value = {'finished': True}
         inspector._check_status(self.task)
         mock_init.assert_called_once_with(
-            session=None,
+            session=mock.sentinel.session,
             api_version=self.api_version,
             inspector_url=None)
         mock_get.assert_called_once_with(self.node.uuid)

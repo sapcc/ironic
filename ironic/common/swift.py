@@ -37,30 +37,37 @@ class SwiftAPI(object):
     """API for communicating with Swift."""
 
     def __init__(self, **session_args):
-        container_project_id = session_args.pop('container_project_id', None)
+
         # TODO(pas-ha): swiftclient does not support keystone sessions ATM.
         # Must be reworked when LP bug #1518938 is fixed.
-        session = _get_swift_session(**session_args)
-        preauthurl = keystone.get_service_url( session,
-                                               service_type='object-store')
-        session_project_id = session.get_project_id()
+        params = {}
+        if CONF.deploy.object_store_endpoint_type == 'radosgw':
+            params = {'authurl': CONF.swift.auth_url,
+                      'user': CONF.swift.username,
+                      'key': CONF.swift.password}
+        else:
+            container_project_id = session_args.pop('container_project_id', None)
+            session = _get_swift_session(**session_args)
+            preauthurl = keystone.get_service_url(session,
+					          service_type='object-store')
+            session_project_id = session.get_project_id()
 
-        if container_project_id and preauthurl.endswith(session_project_id):
-            preauthurl = preauthurl.replace(session_project_id, container_project_id)
+	    if container_project_id and preauthurl.endswith(session_project_id):
+                preauthurl = preauthurl.replace(session_project_id, container_project_id)
 
-        params = {
-            'retries': CONF.swift.swift_max_retries,
-            'preauthurl': preauthurl,
-            'preauthtoken': keystone.get_admin_auth_token(session)
-        }
-        # NOTE(pas-ha):session.verify is for HTTPS urls and can be
-        # - False (do not verify)
-        # - True (verify but try to locate system CA certificates)
-        # - Path (verify using specific CA certificate)
-        verify = session.verify
-        params['insecure'] = not verify
-        if verify and isinstance(verify, six.string_types):
-            params['cacert'] = verify
+            params = {
+                'retries': CONF.swift.swift_max_retries,
+                'preauthurl': preauthurl,
+                'preauthtoken': keystone.get_admin_auth_token(session)
+            }
+            # NOTE(pas-ha):session.verify is for HTTPS urls and can be
+            # - False (do not verify)
+            # - True (verify but try to locate system CA certificates)
+            # - Path (verify using specific CA certificate)
+            verify = session.verify
+            params['insecure'] = not verify
+            if verify and isinstance(verify, six.string_types):
+                params['cacert'] = verify
 
         self.connection = swift_client.Connection(**params)
 
@@ -154,7 +161,7 @@ class SwiftAPI(object):
         except swift_exceptions.ClientException as e:
             operation = _("delete object")
             if e.http_status == http_client.NOT_FOUND:
-                raise exception.SwiftObjectNotFoundError(object=object,
+                raise exception.SwiftObjectNotFoundError(obj=object,
                                                          container=container,
                                                          operation=operation)
 
