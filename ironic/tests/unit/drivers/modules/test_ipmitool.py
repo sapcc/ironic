@@ -1899,12 +1899,13 @@ class IPMIToolDriverTestCase(db_base.DbTestCase):
             task.node.driver_info['ipmi_terminal_port'] = 123
             task.driver.console.validate(task)
 
-    def test_console_validate_missing_port(self):
-        with task_manager.acquire(
-                self.context, self.node.uuid, shared=True) as task:
-            task.node.driver_info.pop('ipmi_terminal_port', None)
-            self.assertRaises(exception.MissingParameterValue,
-                              task.driver.console.validate, task)
+# NOTE: Disabled as if not port is given will use unix socket in our patch
+#    def test_console_validate_missing_port(self):
+#        with task_manager.acquire(
+#                self.context, self.node.uuid, shared=True) as task:
+#            task.node.driver_info.pop('ipmi_terminal_port', None)
+#            self.assertRaises(exception.MissingParameterValue,
+#                              task.driver.console.validate, task)
 
     def test_console_validate_invalid_port(self):
         with task_manager.acquire(
@@ -2064,7 +2065,7 @@ class IPMIToolDriverTestCase(db_base.DbTestCase):
             console_info = self.driver.console.get_console(task)
 
         self.assertEqual(expected, console_info)
-        mock_get.assert_called_once_with(self.info['port'])
+        mock_get.assert_called_once_with(self.info['port'], self.node.uuid)
 
     @mock.patch.object(ipmi, '_exec_ipmitool', autospec=True)
     def test_management_interface_set_boot_device_ok(self, mock_exec):

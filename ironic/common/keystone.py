@@ -19,6 +19,7 @@ from keystoneauth1 import loading as kaloading
 from oslo_log import log as logging
 import six
 
+from ironic.conf import auth as ironic_auth
 from ironic.common import exception
 from ironic.conf import CONF
 
@@ -65,14 +66,18 @@ def get_session(group, **kwargs):
     :param group: name of the config section to load session options from
 
     """
+    timeout = kwargs.pop('timeout', None)
     auth = ironic_auth.load_auth(CONF, group, **kwargs) or _get_legacy_auth()
     if not auth:
         msg = _("Failed to load auth from either [%(new)s] or [%(old)s] "
                 "config sections.")
         raise exception.ConfigInvalid(message=msg, new=group,
                                       old=ironic_auth.LEGACY_SECTION)
+    kwargs['auth'] = auth
+    if timeout:
+        kwargs['timeout'] = timeout
     session = kaloading.load_session_from_conf_options(
-        CONF, group, auth=auth)
+        CONF, group, **kwargs)
     return session
 
 
@@ -127,6 +132,17 @@ def get_auth(group, **auth_kwargs):
         LOG.error('Failed to load auth plugin from group %s', group)
         raise
     return auth
+
+
+@ks_exceptions
+def get_admin_auth_token(session):
+    """Get admin token.
+
+    Currently used for inspector, glance and swift clients.
+    Only swift client does not actually support using sessions directly,
+    LP #1518938, others will be updated in ironic code.
+    """
+    return session.get_token()
 
 
 # NOTE(pas-ha) Used by neutronclient and resolving ironic API only

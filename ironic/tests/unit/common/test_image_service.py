@@ -285,7 +285,8 @@ class ServiceGetterTestCase(base.TestCase):
         self.config(glance_api_version=1, group='glance')
         image_href = 'image-uuid'
         self.context.auth_token = 'fake'
-        image_service.get_image_service(image_href, context=self.context)
+        image_service.get_image_service(image_href, version=1,
+                                        context=self.context)
         glance_service_mock.assert_called_once_with(mock.ANY, None, 1,
                                                     self.context)
         self.assertFalse(session_mock.called)
