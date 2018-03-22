@@ -43,8 +43,6 @@ class SwiftAPI(object):
 
     def __init__(self, **session_args):
 
-        # TODO(pas-ha): swiftclient does not support keystone sessions ATM.
-        # Must be reworked when LP bug #1518938 is fixed.
         params = {}
         if CONF.deploy.object_store_endpoint_type == 'radosgw':
             params = {'authurl': CONF.swift.auth_url,
@@ -65,10 +63,6 @@ class SwiftAPI(object):
                 'preauthurl': preauthurl,
                 'preauthtoken': keystone.get_admin_auth_token(session)
             }
-            # NOTE(pas-ha):session.verify is for HTTPS urls and can be
-            # - False (do not verify)
-            # - True (verify but try to locate system CA certificates)
-            # - Path (verify using specific CA certificate)
             verify = session.verify
             params['insecure'] = not verify
             if verify and isinstance(verify, six.string_types):
