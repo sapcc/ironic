@@ -28,9 +28,14 @@ from ironic.common.i18n import _
 from ironic.common import keystone
 from ironic.conf import CONF
 
+_SWIFT_SESSION = None
+
 
 def _get_swift_session(**session_args):
-    return keystone.get_session('swift', **session_args)
+    global _SWIFT_SESSION
+    if not _SWIFT_SESSION:
+        _SWIFT_SESSION = keystone.get_session('swift', **session_args)
+    return _SWIFT_SESSION
 
 
 class SwiftAPI(object):
