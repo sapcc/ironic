@@ -23,10 +23,6 @@ from ironic.conf import auth as ironic_auth
 from ironic.common import exception
 from ironic.conf import CONF
 
-try:
-    import functools32 as functools
-except ImportError:
-    import functools
 
 LOG = logging.getLogger(__name__)
 
@@ -54,7 +50,6 @@ def ks_exceptions(f):
     return wrapper
 
 
-@functools.lru_cache(maxsize=32)
 @ks_exceptions
 def get_session(group, **kwargs):
     """Loads session object from options in a configuration file section.
