@@ -147,17 +147,22 @@ class GlanceImageService(base_image_service.BaseImageService,
             LOG.debug("Getting temp-url for multi-tenant setup")
             direct_url = image_info['properties'].get('direct_url')
 
-            chunks = urlparse.urlsplit(direct_url) if direct_url else None
-            container_id = object_id = None
-            if chunks and chunks.path:
-                parts = chunks.path.strip('/').split('/')
-                if len(parts) == 2:
-                    container_id, object_id = parts
+            if direct_url.startswith("swift+config"):
+                chunks = urlparse.urlsplit(direct_url) if direct_url else None
+                container_id = object_id = None
+                if chunks and chunks.path:
+                    parts = chunks.path.strip('/').split('/')
+                    if len(parts) == 2:
+                        container_id, object_id = parts
 
-            if not container_id or not object_id:
-                raise exc.ImageUnacceptable(_(
-                    'The given image info does not have a valid direct_url property: %s')
-                                            % image_info)
+                if not container_id or not object_id:
+                    raise exc.ImageUnacceptable(_(
+                        'The given image info does not have a valid direct_url property: %s')
+                                                % image_info)
+
+            else:
+                container_id = "glance_%s" % image_id
+                object_id = image_id
 
             swift = SwiftAPI(container_project_id=image_info['owner'])
             return swift.get_temp_url(container=container_id, object=object_id,
