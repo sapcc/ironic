@@ -252,6 +252,10 @@ def plug_port_to_tenant_network(task, port_like_obj, client=None):
     # nova.
     body = {
         'port': {
+            # Remove it, when arista driver contains the following patch (or equivalent change)
+            # https://github.com/sapcc/networking-arista/commit/418c436cc9972866b91ca3acf9817815273eb925
+            'device_owner': 'baremetal:none',
+            # End of hack
             'binding:vnic_type': 'baremetal',
             'binding:host_id': node.uuid,
         }
