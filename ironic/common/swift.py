@@ -34,7 +34,10 @@ _SWIFT_SESSION = None
 def _get_swift_session(**session_args):
     global _SWIFT_SESSION
     if not _SWIFT_SESSION:
-        _SWIFT_SESSION = keystone.get_session('swift', **session_args)
+        auth = keystone.get_auth('swift')
+        _SWIFT_SESSION = keystone.get_session('swift',
+                                              auth=auth,
+                                              **session_args)
     return _SWIFT_SESSION
 
 
