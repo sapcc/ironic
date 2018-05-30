@@ -200,6 +200,9 @@ def remove_neutron_ports(task, params):
 
         try:
             client.delete_port(port['id'])
+        except neutron_exceptions.NotFound:
+            LOG.debug('VIF %(vif)s for node %(node)s already removed',
+                      {'vif': port['id'], 'node': node_uuid})
         except neutron_exceptions.NeutronClientException as e:
             msg = (_('Could not remove VIF %(vif)s of node %(node)s, possibly '
                      'a network issue: %(exc)s') %
