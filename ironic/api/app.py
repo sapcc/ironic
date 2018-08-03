@@ -29,6 +29,11 @@ from ironic.api.middleware import auth_token
 from ironic.common import exception
 from ironic.conf import CONF
 
+# sapcc/openstack-watcher-middleware
+if CONF.watcher.enabled:
+    import watcher.errors as watcher_errors
+    import watcher.watcher as watcher_middleware
+
 
 class IronicCORS(cors_middleware.CORS):
     """Ironic-specific CORS class
@@ -93,6 +98,20 @@ def setup_app(pecan_config=None, extra_hooks=None):
         app = auth_token.AuthTokenMiddleware(
             app, dict(cfg.CONF),
             public_api_routes=pecan_config.app.acl_public_routes)
+
+    # sapcc/openstack-watcher-middleware
+    if CONF.watcher.enabled:
+        try:
+            app = watcher_middleware.OpenStackWatcherMiddleware(
+                app,
+                config=CONF.watcher
+            )
+        except (EnvironmentError, OSError,
+                watcher_errors.ConfigError) as e:
+            raise exception.InputFileError(
+                file_name=CONF.watcher.config_file,
+                reason=e
+            )
 
     if CONF.profiler.enabled:
         app = osprofiler_web.WsgiMiddleware(app)
