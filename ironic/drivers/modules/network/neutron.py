@@ -217,7 +217,7 @@ class NeutronNetwork(common.NeutronVIFPortIDMixin,
             msg = _("No ports are associated with node %s") % node.uuid
             LOG.error(msg)
             raise exception.NetworkError(msg)
-        ports = [p for p in ports if not p.portgroup_id]
+
         portgroups = task.portgroups
 
         client = neutron.get_client(context=task.context)
