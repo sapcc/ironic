@@ -324,7 +324,7 @@ def remove_ports_from_network(task, network_uuid):
     :param network_uuid: UUID of a neutron network ports will be deleted from.
     :raises: NetworkError
     """
-    macs = [p.address for p in task.ports if p.pxe_enabled]
+    macs = [p.address for p in task.ports]
     if macs:
         params = {
             'network_id': network_uuid,
