@@ -669,8 +669,6 @@ class NodeStatesController(rest.RestController):
                  clean_steps or power driver interface fails.
         :raises: InvalidStateRequested (HTTP 400) if the requested transition
                  is not possible from the current state.
-        :raises: NodeInMaintenance (HTTP 400), if operation cannot be
-                 performed because the node is in maintenance mode.
         :raises: NoFreeConductorWorker (HTTP 503) if no workers are available.
         :raises: NotAcceptable (HTTP 406) if the API version specified does
                  not allow the requested state transition.
@@ -680,11 +678,6 @@ class NodeStatesController(rest.RestController):
 
         api_utils.check_allow_management_verbs(target)
         rpc_node = api_utils.get_rpc_node(node_ident)
-
-        if (target in (ir_states.ACTIVE, ir_states.REBUILD)
-                and rpc_node.maintenance):
-            raise exception.NodeInMaintenance(op=_('provisioning'),
-                                              node=rpc_node.uuid)
 
         m = ir_states.machine.copy()
         m.initialize(rpc_node.provision_state)
