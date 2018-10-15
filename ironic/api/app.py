@@ -17,6 +17,7 @@
 
 import keystonemiddleware.audit as audit_middleware
 from oslo_config import cfg
+from oslo_utils import importutils
 import oslo_middleware.cors as cors_middleware
 from oslo_middleware import healthcheck
 from oslo_middleware import http_proxy_to_wsgi
@@ -32,6 +33,9 @@ from ironic.api.middleware import json_ext
 from ironic.common import exception
 from ironic.conf import CONF
 
+# sapcc/openstack-watcher-middleware
+watcher_errors = importutils.try_import('watcher.errors')
+watcher_middleware = importutils.try_import('watcher.watcher')
 
 class IronicCORS(cors_middleware.CORS):
     """Ironic-specific CORS class
@@ -101,6 +105,20 @@ def setup_app(pecan_config=None, extra_hooks=None):
         app = auth_token.AuthTokenMiddleware(
             app, {"oslo_config_config": cfg.CONF},
             public_api_routes=pecan_config.app.acl_public_routes)
+
+    # sapcc/openstack-watcher-middleware
+    if watcher_errors and watcher_middleware and CONF.watcher.enabled:
+        try:
+            app = watcher_middleware.OpenStackWatcherMiddleware(
+                app,
+                config=dict(CONF.watcher)
+            )
+        except (EnvironmentError, OSError,
+                watcher_errors.ConfigError) as e:
+            raise exception.InputFileError(
+                file_name=CONF.watcher.config_file,
+                reason=e
+            )
 
     if CONF.profiler.enabled:
         app = osprofiler_web.WsgiMiddleware(app)
