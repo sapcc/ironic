@@ -99,8 +99,19 @@ def _stop_console(node_uuid):
 
     try:
         console_pid = _get_console_pid(node_uuid)
-
         os.kill(console_pid, signal.SIGTERM)
+
+        # kill hard if not terminated fast
+        attempt = 0
+        while attempt != 3:
+            if psutil.pid_exists(console_pid):
+                if attempt == 2:
+                    os.kill(console_pid, signal.SIGKILL)
+                time.sleep(CONF.console.subprocess_checking_interval / 10.0)
+                attempt += 1
+            else:
+                break
+
     except OSError as exc:
         if exc.errno != errno.ESRCH:
             msg = (_("Could not stop the console for node '%(node)s'. "
@@ -199,26 +210,30 @@ def start_shellinabox_console(node_uuid, port, console_cmd):
         # if it is, then the shellinaboxd is invoked successfully as a daemon.
         # otherwise check the error.
         if locals['returncode'] is not None:
-            if (locals['returncode'] == 0 and os.path.exists(pid_file)
-                and psutil.pid_exists(_get_console_pid(node_uuid))):
-                raise loopingcall.LoopingCallDone()
-            else:
-                (stdout, stderr) = popen_obj.communicate()
-                locals['errstr'] = _(
-                    "Command: %(command)s.\n"
-                    "Exit code: %(return_code)s.\n"
-                    "Stdout: %(stdout)r\n"
-                    "Stderr: %(stderr)r") % {
-                        'command': ' '.join(args),
-                        'return_code': locals['returncode'],
-                        'stdout': stdout,
-                        'stderr': stderr}
-                LOG.warning(locals['errstr'])
+            path_exist = os.path.exists(pid_file)
+            pid_exist = psutil.pid_exists(_get_console_pid(node_uuid))
+            LOG.debug('Shellinabox subprocess returncode: %s, pid_exist: %s, '
+                      'path_exist: %s' % (locals['returncode'],
+                                          path_exist,
+                                          pid_exist))
+
+            if (locals['returncode'] == 0 and path_exist and pid_exist):
                 raise loopingcall.LoopingCallDone()
 
         if (time.time() > expiration):
-            locals['errstr'] = _("Timeout while waiting for console subprocess"
-                                 "to start for node %s.") % node_uuid
+            LOG.warning("Timeout while waiting for console subprocess"
+                        " to start for node %s." % node_uuid)
+
+            (stdout, stderr) = popen_obj.communicate()
+            locals['errstr'] = _(
+                "Command: %(command)s.\n"
+                "Exit code: %(return_code)s.\n"
+                "Stdout: %(stdout)r\n"
+                "Stderr: %(stderr)r") % {
+                    'command': ' '.join(args),
+                    'return_code': locals['returncode'],
+                    'stdout': stdout,
+                    'stderr': stderr}
             LOG.warning(locals['errstr'])
             raise loopingcall.LoopingCallDone()
 

@@ -145,8 +145,8 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
         console_utils._stop_console(self.info['uuid'])
 
         mock_pid.assert_called_once_with(self.info['uuid'])
-        mock_kill.assert_called_once_with(mock_pid.return_value,
-                                          signal.SIGTERM)
+        mock_kill.assert_called_with(mock_pid.return_value,
+                                     signal.SIGKILL)
         mock_unlink.assert_called_once_with(pid_file)
 
     @mock.patch.object(ironic_utils, 'unlink_without_raise', autospec=True)
@@ -350,11 +350,11 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
 
         mock_stop.assert_called_once_with(self.info['uuid'])
         mock_dir_exists.assert_called_once_with()
-        mock_pid_exists.assert_called_once_with(12345)
+        mock_pid_exists.assert_called_with(12345)
         mock_popen.assert_called_once_with(mock.ANY,
                                            stdout=subprocess.PIPE,
                                            stderr=subprocess.PIPE)
-        mock_popen.return_value.poll.assert_called_once_with()
+        mock_popen.return_value.poll.assert_called_with()
 
     @mock.patch.object(subprocess, 'Popen', autospec=True)
     @mock.patch.object(console_utils, '_ensure_console_pid_dir_exists',
