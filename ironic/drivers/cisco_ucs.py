@@ -19,6 +19,7 @@ from ironic.drivers.modules.cimc import management as cimc_mgmt
 from ironic.drivers.modules.cimc import power as cimc_power
 from ironic.drivers.modules.ucs import management as ucs_mgmt
 from ironic.drivers.modules.ucs import power as ucs_power
+from ironic.drivers.modules.ucs import console as ucs_console
 
 
 class CiscoUCSStandalone(ipmi.IPMIHardware):
@@ -51,3 +52,9 @@ class CiscoUCSManaged(CiscoUCSStandalone):
         """List of supported power interfaces."""
         power = super(CiscoUCSManaged, self).supported_power_interfaces
         return [ucs_power.Power] + power
+
+    @property
+    def supported_console_interfaces(self):
+        """List of supported console interfaces."""
+        console = super(CiscoUCSManaged, self).supported_console_interfaces
+        return [ucs_console.UcsShellInaboxConsole] + console
