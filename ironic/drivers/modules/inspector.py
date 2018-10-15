@@ -36,8 +36,6 @@ client = importutils.try_import('ironic_inspector_client')
 
 INSPECTOR_API_VERSION = (1, 3)
 
-_INSPECTOR_SESSION = None
-
 
 def _get_inspector_session(**kwargs):
     global _INSPECTOR_SESSION

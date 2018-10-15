@@ -31,11 +31,22 @@ import six.moves.urllib.parse as urlparse
 
 from ironic.common import exception
 from ironic.common.i18n import _
+from ironic.common import keystone
 from ironic.common import utils
 from ironic.conf import CONF
 
 IMAGE_CHUNK_SIZE = 1024 * 1024  # 1mb
 LOG = log.getLogger(__name__)
+
+_GLANCE_SESSION = None
+
+
+def _get_glance_session():
+    global _GLANCE_SESSION
+    if not _GLANCE_SESSION:
+        auth = keystone.get_auth('glance')
+        _GLANCE_SESSION = keystone.get_session('glance', auth=auth)
+    return _GLANCE_SESSION
 
 
 # TODO(pas-ha) in Queens change default to '2',
@@ -48,6 +59,11 @@ def GlanceImageService(client=None, version=None, context=None):
     module = importutils.import_versioned_module(module_str, version,
                                                  'image_service')
     service_class = getattr(module, 'GlanceImageService')
+    if (context is not None and CONF.glance.auth_strategy == 'keystone'
+        and not context.auth_token):
+            session = _get_glance_session()
+            context.auth_token = keystone.get_admin_auth_token(session)
+
     return service_class(client, version, context)
 
 
@@ -255,7 +271,7 @@ protocol_mapping = {
 }
 
 
-def get_image_service(image_href, client=None, version=None, context=None):
+def get_image_service(image_href, client=None, version=2, context=None):
     """Get image service instance to download the image.
 
     :param image_href: String containing href to get image service for.

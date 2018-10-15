@@ -89,6 +89,19 @@ def get_auth(group, **auth_kwargs):
 
 
 @ks_exceptions
+def get_admin_auth_token(session):
+    """Get admin token.
+
+    Currently used for inspector, glance and swift clients.
+    Only swift client does not actually support using sessions directly,
+    LP #1518938, others will be updated in ironic code.
+    """
+    return session.get_token()
+
+
+# NOTE(pas-ha) Used by neutronclient and resolving ironic API only
+# FIXME(pas-ha) remove this while moving to kesytoneauth adapters
+@ks_exceptions
 def get_adapter(group, **adapter_kwargs):
     """Loads adapter from options in a configuration file section.
 

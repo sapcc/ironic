@@ -21,12 +21,12 @@ from oslo_log import log
 
 LOG = log.getLogger(__name__)
 
+
 DEFAULT_VALID_INTERFACES = ['internal', 'public']
 
 
 def register_auth_opts(conf, group, service_type=None):
     """Register session- and auth-related options
-
     Registers only basic auth options shared by all auth plugins.
     The rest are registered at runtime depending on auth plugin used.
     """

@@ -15,6 +15,8 @@
 #    under the License.
 
 import six
+from base64 import urlsafe_b64encode
+from os import urandom
 from six.moves import http_client
 from six.moves.urllib import parse
 from swiftclient import client as swift_client
@@ -26,14 +28,17 @@ from ironic.common.i18n import _
 from ironic.common import keystone
 from ironic.conf import CONF
 
+
 _SWIFT_SESSION = None
 
 
-def get_swift_session():
+def _get_swift_session(**session_args):
     global _SWIFT_SESSION
     if not _SWIFT_SESSION:
         auth = keystone.get_auth('swift')
-        _SWIFT_SESSION = keystone.get_session('swift', auth=auth)
+        _SWIFT_SESSION = keystone.get_session('swift',
+                                              auth=auth,
+                                              **session_args)
     return _SWIFT_SESSION
 
 
@@ -43,13 +48,29 @@ class SwiftAPI(object):
     connection = None
     """Underlying Swift connection object."""
 
-    def __init__(self):
+    def __init__(self, **session_args):
         """Initialize the connection with swift
 
         :raises: ConfigInvalid if required keystone authorization credentials
          with swift are missing.
         """
-        params = {'retries': CONF.swift.swift_max_retries}
+        container_project_id = session_args.pop('container_project_id', None)
+        # TODO(pas-ha): swiftclient does not support keystone sessions ATM.
+        # Must be reworked when LP bug #1518938 is fixed.
+        session = _get_swift_session(**session_args)
+        preauthurl = keystone.get_service_url(session,
+                                              service_type='object-store')
+        session_project_id = session.get_project_id()
+
+        if container_project_id and preauthurl.endswith(session_project_id):
+            preauthurl = preauthurl.replace(session_project_id,
+                                            container_project_id)
+
+        params = {
+            'retries': CONF.swift.swift_max_retries,
+            'preauthurl': preauthurl,
+            'preauthtoken': keystone.get_admin_auth_token(session)
+        }
         # NOTE(pas-ha) swiftclient still (as of 3.3.0) does not use
         # (adapter-based) SessionClient, and uses the passed in session
         # only to resolve endpoint and get a token,
@@ -80,12 +101,12 @@ class SwiftAPI(object):
 
         self.connection = swift_client.Connection(**params)
 
-    def create_object(self, container, obj, filename,
+    def create_object(self, container, object, filename,
                       object_headers=None):
         """Uploads a given file to Swift.
 
         :param container: The name of the container for the object.
-        :param obj: The name of the object in Swift
+        :param object: The name of the object in Swift
         :param filename: The file to upload, as the object data
         :param object_headers: the headers for the object to pass to Swift
         :returns: The Swift UUID of the object
@@ -101,7 +122,7 @@ class SwiftAPI(object):
 
             try:
                 obj_uuid = self.connection.put_object(container,
-                                                      obj,
+                                                      object,
                                                       fileobj,
                                                       headers=object_headers)
             except swift_exceptions.ClientException as e:
@@ -111,27 +132,21 @@ class SwiftAPI(object):
 
         return obj_uuid
 
-    def get_temp_url(self, container, obj, timeout):
+    def get_temp_url(self, container, object, timeout):
         """Returns the temp url for the given Swift object.
 
         :param container: The name of the container in which Swift object
             is placed.
-        :param obj: The name of the Swift object.
+        :param object: The name of the Swift object.
         :param timeout: The timeout in seconds after which the generated url
             should expire.
         :returns: The temp url for the object.
         :raises: SwiftOperationError, if any operation with Swift fails.
         """
-        try:
-            account_info = self.connection.head_account()
-        except swift_exceptions.ClientException as e:
-            operation = _("head account")
-            raise exception.SwiftOperationError(operation=operation,
-                                                error=e)
+        temp_url_key = self._get_temp_url_key()
 
         parse_result = parse.urlparse(self.connection.url)
-        swift_object_path = '/'.join((parse_result.path, container, obj))
-        temp_url_key = account_info['x-account-meta-temp-url-key']
+        swift_object_path = '/'.join((parse_result.path, container, object))
         url_path = swift_utils.generate_temp_url(swift_object_path, timeout,
                                                  temp_url_key, 'GET')
         return parse.urlunparse((parse_result.scheme,
@@ -141,53 +156,74 @@ class SwiftAPI(object):
                                  None,
                                  None))
 
-    def delete_object(self, container, obj):
+    def _get_temp_url_key(self):
+        try:
+            account_info = self.connection.head_account()
+        except swift_exceptions.ClientException as e:
+            operation = _("head account")
+            raise exception.SwiftOperationError(operation=operation,
+                                                error=e)
+
+        temp_url_key = account_info.get('x-account-meta-temp-url-key', None)
+
+        if temp_url_key:
+            return temp_url_key
+
+        if CONF.swift.swift_set_temp_url_key:
+            temp_url_key = urlsafe_b64encode(urandom(30))
+            self.connection.post_account(headers={'x-account-meta-temp-url-key': temp_url_key})
+            return temp_url_key
+
+        operation = _("get temp-url-key")
+        raise exception.SwiftTempUrlKeyNotFoundError(operation=operation)
+
+    def delete_object(self, container, object):
         """Deletes the given Swift object.
 
         :param container: The name of the container in which Swift object
             is placed.
-        :param obj: The name of the object in Swift to be deleted.
+        :param object: The name of the object in Swift to be deleted.
         :raises: SwiftObjectNotFoundError, if object is not found in Swift.
         :raises: SwiftOperationError, if operation with Swift fails.
         """
         try:
-            self.connection.delete_object(container, obj)
+            self.connection.delete_object(container, object)
         except swift_exceptions.ClientException as e:
             operation = _("delete object")
             if e.http_status == http_client.NOT_FOUND:
-                raise exception.SwiftObjectNotFoundError(obj=obj,
+                raise exception.SwiftObjectNotFoundError(obj=object,
                                                          container=container,
                                                          operation=operation)
 
             raise exception.SwiftOperationError(operation=operation, error=e)
 
-    def head_object(self, container, obj):
+    def head_object(self, container, object):
         """Retrieves the information about the given Swift object.
 
         :param container: The name of the container in which Swift object
             is placed.
-        :param obj: The name of the object in Swift
+        :param object: The name of the object in Swift
         :returns: The information about the object as returned by
             Swift client's head_object call.
         :raises: SwiftOperationError, if operation with Swift fails.
         """
         try:
-            return self.connection.head_object(container, obj)
+            return self.connection.head_object(container, object)
         except swift_exceptions.ClientException as e:
             operation = _("head object")
             raise exception.SwiftOperationError(operation=operation, error=e)
 
-    def update_object_meta(self, container, obj, object_headers):
+    def update_object_meta(self, container, object, object_headers):
         """Update the metadata of a given Swift object.
 
         :param container: The name of the container in which Swift object
             is placed.
-        :param obj: The name of the object in Swift
+        :param object: The name of the object in Swift
         :param object_headers: the headers for the object to pass to Swift
         :raises: SwiftOperationError, if operation with Swift fails.
         """
         try:
-            self.connection.post_object(container, obj, object_headers)
+            self.connection.post_object(container, object, object_headers)
         except swift_exceptions.ClientException as e:
             operation = _("post object")
             raise exception.SwiftOperationError(operation=operation, error=e)

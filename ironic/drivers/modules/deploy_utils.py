@@ -75,8 +75,6 @@ DISK_LAYOUT_PARAMS = ('root_gb', 'swap_mb', 'ephemeral_gb')
 # All functions are called from deploy() directly or indirectly.
 # They are split for stub-out.
 
-_IRONIC_SESSION = None
-
 
 def _get_ironic_session():
     global _IRONIC_SESSION

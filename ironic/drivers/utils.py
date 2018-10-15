@@ -320,7 +320,8 @@ def store_ramdisk_logs(node, logs, label=None):
 
             scope = {}
             if CONF.agent.deploy_logs_swift_project_id:
-                scope['project_id'] = CONF.agent.deploy_logs_swift_project_id
+                scope['container_project_id'] = \
+                    CONF.agent.deploy_logs_swift_project_id
             elif CONF.agent.deploy_logs_swift_project_name and CONF.agent.deploy_logs_swift_project_domain_name:
                 scope['project_name'] = CONF.agent.deploy_logs_swift_project_name
                 scope['project_domain_name'] = CONF.agent.deploy_logs_swift_project_domain_name
