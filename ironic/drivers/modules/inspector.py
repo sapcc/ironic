@@ -33,7 +33,7 @@ LOG = logging.getLogger(__name__)
 
 client = importutils.try_import('ironic_inspector_client')
 
-
+_INSPECTOR_SESSION = None
 INSPECTOR_API_VERSION = (1, 3)
 
 

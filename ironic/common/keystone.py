@@ -116,6 +116,26 @@ def get_adapter(group, **adapter_kwargs):
                                                     **adapter_kwargs)
 
 
+# NOTE(pas-ha) Used by neutronclient and resolving ironic API only
+# FIXME(pas-ha) remove this while moving to kesytoneauth adapters
+@ks_exceptions
+def get_service_url(session, **kwargs):
+    """Find endpoint for given service in keystone catalog.
+    If 'interface' is provided, fetches service url of this interface.
+    Otherwise, first tries to fetch 'internal' endpoint,
+    and then the 'public' one.
+    :param session: keystoneauth Session object
+    :param kwargs: any other arguments accepted by Session.get_endpoint method
+    """
+
+    if 'interface' in kwargs:
+        return session.get_endpoint(**kwargs)
+    try:
+        return session.get_endpoint(interface='internal', **kwargs)
+    except kaexception.EndpointNotFound:
+        return session.get_endpoint(interface='public', **kwargs)
+
+
 def get_service_auth(context, endpoint, service_auth):
     """Create auth plugin wrapping both user and service auth.
 

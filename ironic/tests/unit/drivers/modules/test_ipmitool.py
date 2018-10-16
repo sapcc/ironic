@@ -1750,7 +1750,7 @@ class IPMIToolDriverTestCase(Base):
         with task_manager.acquire(self.context,
                                   self.node.uuid) as task:
             expected = [mock.call.power_on(task, self.info, timeout=None)]
-            self.driver.power.reboot(task)
+            self.power.reboot(task)
             mock_next_boot.assert_called_once_with(task, self.info)
 
         self.assertEqual(expected, manager.mock_calls)
@@ -1759,6 +1759,7 @@ class IPMIToolDriverTestCase(Base):
     @mock.patch.object(ipmi, '_power_off', spec_set=types.FunctionType)
     @mock.patch.object(ipmi, '_power_on', spec_set=types.FunctionType)
     @mock.patch.object(ipmi, '_power_status',
+                       lambda driver_info: states.POWER_ON)
     def test_reboot_timeout_ok(self, mock_on, mock_off, mock_next_boot):
         manager = mock.MagicMock()
         # NOTE(rloo): if autospec is True, then manager.mock_calls is empty
