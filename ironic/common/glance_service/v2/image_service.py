@@ -151,8 +151,8 @@ class GlanceImageService(base_image_service.BaseImageService,
             container_id = "glance_%s" % image_id
             object_id = image_id
 
-            swift = SwiftAPI(container_project_id=image_info['owner'])
-            return swift.get_temp_url(container=container_id, object=object_id,
+            swift_api = SwiftAPI(container_project_id=image_info['owner'])
+            return swift_api.get_temp_url(container=container_id, object=object_id,
                                       timeout=CONF.glance.swift_temp_url_duration)
 
         url_fragments = {
@@ -186,7 +186,7 @@ class GlanceImageService(base_image_service.BaseImageService,
             account = 'AUTH_%s' % auth_ref.project_id
 
         if not key:
-            swift_api = swift.SwiftAPI()
+            swift_api = SwiftAPI()
             key_header = 'x-account-meta-temp-url-key'
             key = swift_api.connection.head_account().get(key_header)
 

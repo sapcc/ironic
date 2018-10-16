@@ -4176,14 +4176,15 @@ class TestPut(test_api_base.BaseApiTest):
             mock_scm.assert_called_once_with(mock.ANY, self.node.uuid,
                                              True, 'test-topic')
 
-    def test_provision_node_in_maintenance_fail(self):
+    def test_provision_node_in_maintenance_does_not_fail(self):
+        # We allow to provision a node in maintenance for the test
         self.node.maintenance = True
         self.node.save()
 
         ret = self.put_json('/nodes/%s/states/provision' % self.node.uuid,
                             {'target': states.ACTIVE},
                             expect_errors=True)
-        self.assertEqual(http_client.BAD_REQUEST, ret.status_code)
+        self.assertEqual(http_client.ACCEPTED, ret.status_code)
         self.assertTrue(ret.json['error_message'])
 
     @mock.patch.object(rpcapi.ConductorAPI, 'set_target_raid_config',
