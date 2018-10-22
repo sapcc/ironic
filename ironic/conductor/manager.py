@@ -212,6 +212,10 @@ class ConductorManager(base_manager.BaseConductorManager):
                 raise exception.NodeAssociated(
                     node=node_id, instance=task.node.instance_uuid)
 
+            # Remove ports in case of failed cleanup
+            if 'instance_uuid' in delta and not node_obj.instance_uuid:
+                task.driver.network.unconfigure_tenant_networks(task)
+
             # NOTE(dtantsur): if the resource class is changed for an active
             # instance, nova will not update its internal record. That will
             # result in the new resource class exposed on the node as available
