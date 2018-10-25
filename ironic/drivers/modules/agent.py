@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ast import literal_eval
 from ironic_lib import metrics_utils
 from ironic_lib import utils as il_utils
 from oslo_log import log
@@ -502,6 +503,9 @@ class AgentDeploy(AgentDeployMixin, base.DeployInterface):
                     instance_info = node.instance_info
                     capabilities = instance_info.get('capabilities', {})
                     if 'boot_option' not in capabilities:
+                        if isinstance(capabilities, unicode):
+                            # we have to force unicode object to dict first:
+                            capabilities = literal_eval(capabilities)
                         capabilities['boot_option'] = 'local'
                         instance_info['capabilities'] = capabilities
                         node.instance_info = instance_info
