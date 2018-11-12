@@ -125,7 +125,7 @@ def _get_instance_image_info(node, ctx):
             version=CONF.glance.glance_api_version, context=ctx)
         iproperties = glance_service.show(d_info['image_source'])['properties']
         for label in labels:
-            i_info[label] = str(iproperties[label + '_id'])
+            i_info[label] = str(iproperties.get(label + '_id', ""))
         node.instance_info = i_info
         node.save()
 
