@@ -22,6 +22,10 @@ opts = [
                default='neutron',
                help=_('DHCP provider to use. "neutron" uses Neutron, and '
                       '"none" uses a no-op provider.')),
+    cfg.BoolOpt('ipxe_no_pxedhcp',
+                default=False,
+                help=_('If the dhcp provider is authoritative and there is no'
+                       ' ProxyDHCP server'))
 ]
 
 

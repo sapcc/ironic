@@ -370,6 +370,9 @@ def dhcp_options_for_instance(task):
                               'opt_value': boot_file})
             dhcp_opts.append({'opt_name': "tag:ipxe,%s" % DHCP_BOOTFILE_NAME,
                               'opt_value': ipxe_script_url})
+            if CONF.dhcp.ipxe_no_pxedhcp:
+                dhcp_opts.append({'opt_name': "tag:ipxe,ipxe.no-pxedhcp",
+                                  'opt_value': '1'})
         else:
             # !175 == non-iPXE.
             # http://ipxe.org/howto/dhcpd#ipxe-specific_options
