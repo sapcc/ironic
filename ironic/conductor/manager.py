@@ -763,6 +763,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                         optionally be preserved.
         :param configdrive: Optional. A gzipped and base64 encoded configdrive.
         :raises: InstanceDeployFailure
+        :raises: NodeInMaintenance if the node is in maintenance mode.
         :raises: NoFreeConductorWorker when there is no free worker to start
                  async task.
         :raises: InvalidStateRequested when the requested state is not a valid
@@ -778,6 +779,9 @@ class ConductorManager(base_manager.BaseConductorManager):
         with task_manager.acquire(context, node_id, shared=False,
                                   purpose='node deployment') as task:
             node = task.node
+            if node.maintenance:
+                raise exception.NodeInMaintenance(op=_('provisioning'),
+                                                  node=node.uuid)
 
             if rebuild:
                 event = 'rebuild'
