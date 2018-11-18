@@ -35,7 +35,7 @@ class Version(base.APIBase):
     """
 
     id = wtypes.text
-    """The ID of the (major) version, also acts as the release number"""
+    """The ID of the current version"""
 
     links = [link.Link]
     """A Link that point to a specific version of the API"""
@@ -50,15 +50,16 @@ class Version(base.APIBase):
     """
 
     version = wtypes.text
-    """The current, maximum supported (major.minor) version of API."""
 
     min_version = wtypes.text
     """Minimum supported (major.minor) version of API."""
 
     def __init__(self, id, min_version, version, status='CURRENT'):
-        self.id = id
+        # ID needs to be the (major.minor) version for version discovery
+        # @see https://wiki.openstack.org/wiki/VersionDiscovery#id
+        self.id = version
         self.links = [link.Link.make_link('self', pecan.request.public_url,
-                                          self.id, '', bookmark=True)]
+                                          id, '', bookmark=True)]
         self.status = status
         self.version = version
         self.min_version = min_version
