@@ -30,7 +30,7 @@ from ironic.common import keystone
 from ironic.conf import CONF
 
 
-@lru_cache(max_size=32)
+@lru_cache(maxsize=32)
 def get_swift_session(**session_args):
     auth = keystone.get_auth('swift', **session_args)
     return keystone.get_session('swift', auth=auth)
