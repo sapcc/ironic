@@ -214,8 +214,12 @@ class ConductorManager(base_manager.BaseConductorManager):
 
             # Remove ports in case of failed cleanup
             if 'instance_uuid' in delta and not node_obj.instance_uuid:
-                task.driver.network.unconfigure_tenant_networks(task)
-                task.driver.network.remove_cleaning_network(task)
+                try:
+                    task.driver.network.unconfigure_tenant_networks(task)
+                    task.driver.network.remove_cleaning_network(task)
+                except AttributeError:
+                     LOG.warning('Cannot remove ports from node '
+                                '%s, after failed cleanup ', node_id)
 
             # NOTE(dtantsur): if the resource class is changed for an active
             # instance, nova will not update its internal record. That will
