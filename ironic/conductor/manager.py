@@ -217,7 +217,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                 try:
                     task.driver.network.unconfigure_tenant_networks(task)
                     task.driver.network.remove_cleaning_network(task)
-                except TypeError:
+                except AttributeError:
                      LOG.warning('Cannot remove ports from node '
                                 '%s, after failed cleanup ', node_id)
 
