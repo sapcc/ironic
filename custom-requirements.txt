@@ -1,5 +1,5 @@
 raven
 redis
-ptftpd
 
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
+git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
