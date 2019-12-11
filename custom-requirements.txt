@@ -1,3 +1,4 @@
 raven
+redis
 
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
