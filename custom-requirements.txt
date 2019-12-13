@@ -1,7 +1,7 @@
 raven
 redis
 python-ironic-inspector-client
-ironic-inspecto
+ironic-inspector
 
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
