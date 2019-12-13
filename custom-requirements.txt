@@ -1,6 +1,5 @@
 raven
 redis
-ipmitool
 python-ironic-inspector-client
 ironic-inspecto
 
