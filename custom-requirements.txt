@@ -1,6 +1,7 @@
 raven
 redis
 python-ironic-inspector-client
+openstack-ironic-staging-drivers
 
 git+https://github.com/sapcc/ironic-inspector@stable/rocky-m3#egg=ironic-inspector
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
