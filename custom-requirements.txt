@@ -8,6 +8,6 @@ hpOneView>=4.4.0
 ucsmsdk>=0.9.1
 ImcSdk>=0.7.2
 
-git+https://github.com/sapcc/ironic-inspector@stable/rocky-m3#egg=ironic-inspector
+git+https://github.com/openstack/ironic-inspector@stable/train#egg=ironic-inspector
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
