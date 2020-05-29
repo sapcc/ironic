@@ -10,7 +10,7 @@ python-openstackclient
 python-scciclient>=0.7.2
 python-ilorest-library>=2.1.0
 hpOneView>=4.4.0
-git+https://github.com/sapcc/UcsPythonSDK.git#egg=UcsSdk
+ucsmsdk>=0.9.1
 python-dracclient>=1.3.0
 python-xclarityclient>=0.1.6
 ImcSdk>=0.7.2
