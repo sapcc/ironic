@@ -15,8 +15,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+
 import keystonemiddleware.audit as audit_middleware
+from ironic_lib import auth_basic
 from keystonemiddleware import auth_token
+# Try using custom ccloud auditmiddleware
+try:
+    import auditmiddleware as audit_middleware
+except ImportError:
+    import keystonemiddleware.audit as audit_middleware
 from oslo_config import cfg
 import oslo_middleware.cors as cors_middleware
 from oslo_middleware import healthcheck
