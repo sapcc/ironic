@@ -190,7 +190,7 @@ def get_shellinabox_console_url(port, uuid=None):
                                                'host': console_host,
                                                'port': port,
                                                'uuid': uuid,
-                                               'digest': digest,
+                                               'digest': digest.decode("utf-8"),
                                                'expiry': expiry }
 
 
