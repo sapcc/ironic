@@ -11,4 +11,5 @@ pymemcache==1.2.9
 
 git+https://github.com/openstack/ironic-inspector@stable/train#egg=ironic-inspector
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
+git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
