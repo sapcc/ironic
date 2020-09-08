@@ -1276,6 +1276,7 @@ def build_instance_info_for_deploy(task):
                   {'info': image_info, 'node': node.uuid})
         if CONF.agent.image_download_source == 'swift':
             swift_temp_url = glance.swift_temp_url(image_info)
+            LOG.debug('Validating swift_temp_url: %(url)s.', {'url': swift_temp_url})
             validate_image_url(swift_temp_url, secret=True)
             instance_info['image_url'] = swift_temp_url
             instance_info['image_checksum'] = image_info['checksum']
