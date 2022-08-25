@@ -1556,8 +1556,8 @@ class IPMIShellinaboxConsole(IPMIConsole):
         # duplicated port.
         _release_allocated_port(task)
         driver_info = _parse_driver_info(task.node)
-        if not driver_info['port']:
-            driver_info['port'] = _allocate_port(task)
+        # if not driver_info['port']:
+        #    driver_info['port'] = _allocate_port(task)
 
         try:
             self._exec_stop_console(driver_info)
@@ -1591,7 +1591,8 @@ class IPMIShellinaboxConsole(IPMIConsole):
     def get_console(self, task):
         """Get the type and connection information about the console."""
         driver_info = _parse_driver_info(task.node)
-        url = console_utils.get_shellinabox_console_url(port=driver_info['port'], uuid=task.node.uuid)
+        url = console_utils.get_shellinabox_console_url(
+            port=driver_info['port'], uuid=task.node.uuid)
         return {'type': 'shellinabox', 'url': url}
 
 
