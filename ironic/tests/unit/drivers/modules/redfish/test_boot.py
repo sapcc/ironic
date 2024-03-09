@@ -1738,7 +1738,8 @@ class RedfishVirtualMediaBootTestCase(db_base.DbTestCase):
             redfish_boot._has_vmedia_device(
                 [mock_manager], sushy.VIRTUAL_MEDIA_FLOPPY, inserted=True))
 
-
+@mock.patch('oslo_utils.eventletutils.EventletEvent.wait',
+            lambda *args, **kwargs: None)
 class RedfishHTTPBootTestCase(db_base.DbTestCase):
 
     def setUp(self):
