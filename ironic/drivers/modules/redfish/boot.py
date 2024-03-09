@@ -169,37 +169,6 @@ def _test_retry(exception):
         return True
     return False
 
-
-def _has_vmedia_via_systems(system):
-    """Indicates if virtual media is available through Systems
-
-    :param system: A redfish System object
-    :return: True if the System has virtual media, else False
-    """
-    try:
-        system.virtual_media
-        return True
-    except sushy.exceptions.MissingAttributeError:
-        return False
-    except AttributeError:
-        # NOTE(wncslln): In case of older versions of sushy are
-        # used.
-        return False
-
-
-def _has_vmedia_via_manager(manager):
-    """Indicates if virtual media is available in the Manager
-
-    :param manager: A redfish System object
-    :return: True if the System has virtual media, else False
-    """
-    try:
-        manager.virtual_media
-        return True
-    except sushy.exceptions.MissingAttributeError:
-        return False
-
-
 def _get_vmedia(task, managers):
     """GET virtual media details
 
@@ -249,6 +218,35 @@ def _get_vmedia(task, managers):
     else:
         exc_msg = 'No suitable virtual media device found'
     raise exception.InvalidParameterValue(exc_msg)
+
+
+def _has_vmedia_via_systems(system):
+    """Indicates if virtual media is available through Systems
+
+    :param system: A redfish System object
+    :return: True if the System has virtual media, else False
+    """
+    try:
+        system.virtual_media
+        return True
+    except sushy.exceptions.MissingAttributeError:
+        return False
+    except AttributeError:
+        # NOTE(wncslln): In case of older versions of sushy are
+        # used.
+        return False
+    
+def _has_vmedia_via_manager(manager):
+    """Indicates if virtual media is available in the Manager
+
+    :param manager: A redfish System object
+    :return: True if the System has virtual media, else False
+    """
+    try:
+        manager.virtual_media
+        return True
+    except sushy.exceptions.MissingAttributeError:
+        return False
 
 
 def _insert_vmedia(task, managers, boot_url, boot_device):
@@ -352,9 +350,7 @@ def _insert_vmedia_in_resource(task, resource, boot_url, boot_device,
                                        'boot_url': boot_url,
                                        'boot_device': boot_device})
                 return True
-
-            continue
-
+            continue        
         try:
             v_media.insert_media(boot_url, inserted=True,
                                  write_protected=True)
