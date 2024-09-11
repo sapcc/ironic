@@ -7,14 +7,17 @@ python-openstackclient
 python-ilorest-library>=2.1.0
 hpOneView>=4.4.0
 
+# we probably want to drop this next time, hasn't seen an upgrade in two years
 python-dracclient>=5.1.0,<8.0.0
 # The Redfish hardware type uses the Sushy library
-git+https://github.com/sapcc/sushy.git@stable/xena-m3#egg=sushy
+# upstream has fwiesels changes starting from 2024.1
+git+https://github.com/sapcc/sushy.git@stable/2023.1-m3#egg=sushy
 # Dell EMC iDRAC sushy OEM extension
-git+https://github.com/sapcc/sushy-oem-idrac.git@stable/xena-m3#egg=sushy-oem-idrac
+git+https://github.com/openstack/sushy-oem-idrac.git@master#egg=sushy-oem-idrac
 
-git+https://github.com/openstack/ironic-inspector@stable/xena#egg=ironic-inspector
+# the inspector is going to get deprecated soon and we never used it
+git+https://github.com/openstack/ironic-inspector@stable/2023.1#egg=ironic-inspector
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
--e git+https://github.com/sapcc/python-agentliveness@ironic_check#egg=agentliveness
+-e git+https://github.com/sapcc/python-agentliveness@master#egg=agentliveness
