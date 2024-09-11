@@ -17,4 +17,4 @@ git+https://github.com/sapcc/ironic-inspector@stable/xena-m3#egg=ironic-inspecto
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
--e git+https://github.com/sapcc/python-agentliveness@ironic_check#egg=agentliveness
+-e git+https://github.com/sapcc/python-agentliveness@master#egg=agentliveness
