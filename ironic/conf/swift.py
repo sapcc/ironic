@@ -15,6 +15,18 @@
 #    under the License.
 
 from ironic.conf import auth
+from oslo_config import cfg
+from ironic.common.i18n import _
+
+opts = [
+    cfg.IntOpt('swift_max_retries',
+               default=2,
+               help=_('Maximum number of times to retry a Swift request, '
+                      'before failing.')),
+    cfg.BoolOpt('swift_set_temp_url_key',
+                default=False,
+                help=_('Should the service try to set the temp-url key if missing '))
+]
 
 
 def register_opts(conf):
