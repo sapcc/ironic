@@ -2,6 +2,17 @@ jaeger-client
 raven
 redis
 
+# Needed so setuptools works see https://github.com/pypa/setuptools/issues/4478
+# or we run into:  AttributeError: module 'importlib_metadata' has no attribute 'EntryPoints'
+packaging
+ordered-set
+more_itertools
+jaraco.text
+importlib_resources
+importlib_metadata
+tomli
+wheel
+
 # ironic driver dep
 python-openstackclient
 python-ilorest-library>=2.1.0
@@ -18,3 +29,4 @@ git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middle
 git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
 -e git+https://github.com/sapcc/python-agentliveness@master#egg=agentliveness
+
