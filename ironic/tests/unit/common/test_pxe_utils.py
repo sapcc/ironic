@@ -166,6 +166,7 @@ class TestPXEUtils(db_base.DbTestCase):
 
         self.assertEqual(str(expected_template), rendered_template)
 
+
     def test_pxe_config(self):
         rendered_template = utils.render_template(
             CONF.pxe.uefi_pxe_config_template,
