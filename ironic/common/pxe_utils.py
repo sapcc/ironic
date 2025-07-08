@@ -345,6 +345,12 @@ def create_pxe_config(task, pxe_options, template=None, ipxe_enabled=False):
     if uefi_with_grub:
         pxe_config_root_tag = '(( ROOT ))'
         pxe_config_disk_ident = '(( DISK_IDENTIFIER ))'
+
+        commands = {
+            'linux_cmd': 'linux',
+            'initrd_cmd': 'initrd'
+        }
+        pxe_options.update(commands)
     else:
         # TODO(stendulker): We should use '(' ')' as the delimiters for all our
         # config files so that we do not need special handling for each of the
