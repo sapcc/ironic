@@ -85,7 +85,7 @@ api_opts = [
 
 driver_opts = [
     cfg.ListOpt('enabled_hardware_types',
-                default=['ipmi', 'redfish'],
+                default=['ipmi', 'redfish', 'hpe_superdome'],
                 help=_('Specify the list of hardware types to load during '
                        'service initialization. Missing hardware types, or '
                        'hardware types which fail to initialize, will prevent '
@@ -101,7 +101,7 @@ driver_opts = [
     cfg.StrOpt('default_bios_interface',
                help=_DEFAULT_IFACE_HELP.format('bios')),
     cfg.ListOpt('enabled_boot_interfaces',
-                default=['ipxe', 'pxe', 'redfish-virtual-media'],
+                default=['ipxe', 'pxe', 'redfish-virtual-media', 'hpe-superdome-vmedia'],
                 help=_ENABLED_IFACE_HELP.format('boot')),
     cfg.StrOpt('default_boot_interface',
                help=_DEFAULT_IFACE_HELP.format('boot')),
