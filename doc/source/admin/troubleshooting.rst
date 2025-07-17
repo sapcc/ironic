@@ -1148,23 +1148,111 @@ being removed or replaced.
 Ironic says my Image is Invalid
 ===============================
 
-As a result of security fixes which were added to Ironic, resulting from the
-security posture of the ``qemu-img`` utility, Ironic enforces certain aspects
-related to image files.
+With larger clusters, the act of synchronizing DHCP for introspection and
+hardware discovery can take quite a bit of time because of the operational
+overhead. What happens is we spend so much time trying to perform
+the update that the processes stay continuously busy, which can have a side
+effect such as impacting the ability to successfully introspect nodes
+which were very recently added to the cluster.
 
-* Enforces that the file format of a disk image matches what Ironic is
-  told by an API user. Any mismatch will result in the image being declared
-  as invalid. A mismatch with the file contents and what is stored in the
-  Image service will necessitate uploading a new image as that property
-  cannot be changed in the image service *after* creation of an image.
-* Enforces that the input file format to be written is ``qcow2`` or ``raw``.
-  This can be extended by modifying ``[conductor]permitted_image_formats`` in
-  ``ironic.conf``.
-* Performs safety and sanity check assessment against the file, which can be
-  disabled by modifying ``[conductor]disable_deep_image_inspection`` and
-  setting it to ``True``. Doing so is not considered safe and should only
-  be done by operators accepting the inherent risk that the image they
-  are attempting to use may have a bad or malicious structure.
-  Image safety checks are generally performed as the deployment process begins
-  and stages artifacts, however a late stage check is performed when
-  needed by the ironic-python-agent.
+To remedy this, try setting ``[pxe_filter]sync_period`` to be less frequent,
+i.e. a larger value to enable conductors to have time between running syncs.
+
+.. note::
+   It is anticipated that as part of the 2024.1 release, Ironic will have
+   this functionality also merged into Ironic directly as part of the
+   merge of the ``ironic-inspector`` service into ``ironic`` itself. This
+   merger will result in a slightly more performant implementation, which may
+   necessitate re-evaluation and tuning of the ``[pxe_filter]sync_period``
+   parameter.
+
+Some or all of my baremetal nodes disappeared! Help?!
+=====================================================
+
+If you just upgraded, and this has occurred:
+
+#) Don't Panic
+#) Don't try to re-enroll the nodes. They should still be there,
+   you just can't see them at the moment.
+
+Over the past few years, Ironic and OpenStack project as a whole has been
+working to improve the model of Role Based Access Control. For users of
+Ironic, this means an extended role based access control model allowing
+delineation of nodes and the ability for projects to both self-manage.
+
+The result is that users inside of a project are only permitted to see
+baremetal nodes, through the ``owner`` and ``lessee`` field, which has
+been granted access to the project.
+
+However, as with any complex effort, there can be hiccups, and you have
+encountered one. Specifically that based upon large scale operator feedback,
+Ironic kept logic behind System scoped user usage, which OpenStack largely
+avoided due to concerns over effort.
+
+As such, you have a couple different paths you can take, and your ideal
+path is also going to vary upon your model of usage and comfort level.
+We recommend reading the rest of this answer section before taking any
+further action.
+
+A good starting point is obtaining a ``system`` scoped account with an
+``admin`` or ``member`` role. Either of those roles will permit a node's
+``owner`` or ``lessee`` fields to be changed. Executing
+``baremetal node list`` commands with this account should show you all
+baremetal nodes across all projects. Alternatively, if you just want to
+enable the legacy RBAC policies temporarily to change the fields, that is also
+an option, although not encouraged, and can be done utilizing the
+``[oslo_policy] enforce_scope`` and ``[oslo_policy] enforce_new_defaults``
+settings.
+
+System Scoped Accounts
+----------------------
+
+A ``system`` scoped account is one which has access and authority over the
+whole of the of an OpenStack deployment. A simplified way to think of
+this is when deployed, a username and password is utilized to "bootstrap"
+keystone. The rights granted to that user are inherently a system scoped
+``admin`` role level of access. You can use this level of access to
+check the status, or run additional commands.
+
+In this example below, which if successful, should return a list of all
+baremetal nodes known to Ironic, once the executing user supplies the
+valid password. In this case the "admin" account keystone was
+bootstrapped with. As a minor note, you will not be able to have
+any "OS_*" environment variables loaded into your current
+command shell, including "OS_CLOUD" for this command to be successful.
+
+.. code-block:: console
+
+    $ openstack --os-username=admin --os-user-domain-name=default --os-system-scope all baremetal node list
+
+You can alternatively issue a `system-scoped token <https://docs.openstack.org/keystone/latest/admin/tokens-overview.html#operation_create_system_token>`_
+and reuse further commands with that token, or even generate a new system
+scoped account with a role of ``member``.
+
+Changing/Assigning an Owner
+---------------------------
+
+Ironic performs matching based upon Project ID. The owner field can be set
+to a project's ID value, which allows baremetal nodes to be visible.
+
+.. code-block:: console
+
+    $ PROJECT_ID=$(openstack project show -c id -f value $PROJECT_NAME)
+    $ baremetal node set --owner $PROJECT_ID $NODE_UUID_OR_NAME
+
+Why am I only seeing *some* of the nodes?
+-----------------------------------------
+
+During the Zed development cycle of Ironic, Ironic added an option which
+defaulted to True, which enabled project scoped ``admin`` users to be able
+to create their own baremetal nodes without needing higher level access.
+This default enabled option, ``[api] project_admin_can_manage_own_nodes``,
+automatically stamps the requestor's project ID on to a baremetal node if an
+``owner`` is not otherwise specified upon creation. Obviously, this can
+create a mixed perception if an operator never paid attention to the ``owner``
+field before now.
+
+If your bare metal management processes require that full machine management
+is made using a project scoped account, please configure an appropriate
+node ``owner`` for the nodes which need to be managed. Ironic recognizes
+this is going to vary based upon processes and preferences.
