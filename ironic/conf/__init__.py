@@ -52,6 +52,7 @@ from ironic.conf import snmp
 from ironic.conf import swift
 from ironic.conf import xclarity
 from ironic.conf import watcher
+from ironic.conf import rate_limit
 
 CONF = cfg.CONF
 
@@ -92,3 +93,4 @@ snmp.register_opts(CONF)
 swift.register_opts(CONF)
 xclarity.register_opts(CONF)
 watcher.register_opts(CONF)
+rate_limit.register_opts(CONF)
