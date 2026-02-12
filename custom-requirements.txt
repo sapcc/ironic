@@ -1,4 +1,5 @@
-raven
+jaeger-client
+git+https://github.com/sapcc/sentrylogger.git#egg=sapcc-sentrylogger
 redis
 
 # ironic driver dep
