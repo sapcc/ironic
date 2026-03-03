@@ -19,15 +19,23 @@ from oslo_config import cfg
 
 from ironic.drivers.modules.drac import bios
 from ironic.drivers.modules.drac import boot
+from ironic.drivers.modules.drac import console
 from ironic.drivers.modules.drac import inspect as drac_inspect
 from ironic.drivers.modules.drac import management
 from ironic.drivers.modules.drac import power
 from ironic.drivers.modules.drac import raid
 from ironic.drivers.modules.drac import vendor_passthru
+
 from ironic.drivers.modules.redfish import boot as redfish_boot
 from ironic.drivers.modules.redfish import inspect as redfish_inspect
 from ironic.drivers.modules.redfish import raid as redfish_raid
 from ironic.drivers import redfish
+
+from ironic.drivers.modules import ipmitool
+from ironic.drivers.modules import ipxe
+from ironic.drivers.modules import noop
+from ironic.drivers.modules import pxe
+
 
 
 CONF = cfg.CONF
@@ -46,6 +54,13 @@ class IDRACHardware(redfish.RedfishHardware):
         idx = inherited.index(redfish_boot.RedfishVirtualMediaBoot)
         inherited[idx] = boot.DracRedfishVirtualMediaBoot
         return inherited
+
+    @property
+    def supported_console_interfaces(self):
+        """List of supported console interfaces."""
+        return [ipmitool.IPMISocatConsole, ipmitool.IPMIShellinaboxConsole,
+                noop.NoConsole, console.DracRedFishVNCConsole,
+                console.DracRedFishKVMConsole]
 
     @property
     def supported_management_interfaces(self):

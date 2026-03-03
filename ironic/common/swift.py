@@ -14,6 +14,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from base64 import urlsafe_b64encode
+from functools import lru_cache
+from os import urandom
+from http import client as http_client
 from urllib import parse as urlparse
 
 import openstack
@@ -25,27 +29,68 @@ from ironic.common.i18n import _
 from ironic.common import keystone
 from ironic.conf import CONF
 
-LOG = log.getLogger(__name__)
 
-_SWIFT_SESSION = None
-
-
-def get_swift_session():
-    global _SWIFT_SESSION
-    if not _SWIFT_SESSION:
-        auth = keystone.get_auth('swift')
-        _SWIFT_SESSION = keystone.get_session('swift', auth=auth)
-    return _SWIFT_SESSION
+@lru_cache(maxsize=32)
+def get_swift_session(**session_args):
+    auth = keystone.get_auth('swift', **session_args)
+    return keystone.get_session('swift', auth=auth)
 
 
 class SwiftAPI(object):
     """API for communicating with Swift."""
 
-    def __init__(self):
-        """Initialize the connection with swift"""
-        self.connection = openstack.connection.Connection(
-            session=get_swift_session(),
-            oslo_conf=CONF)
+    connection = None
+    """Underlying Swift connection object."""
+
+    def __init__(self, **session_args):
+        """Initialize the connection with swift
+
+        :raises: ConfigInvalid if required keystone authorization credentials
+         with swift are missing.
+        """
+        container_project_id = session_args.pop('container_project_id', None)
+        session = get_swift_session(**session_args)
+        preauthurl = keystone.get_service_url(session,
+                                              service_type='object-store')
+        session_project_id = session.get_project_id()
+
+        if container_project_id and preauthurl.endswith(session_project_id):
+            preauthurl = preauthurl.replace(session_project_id,
+                                            container_project_id)
+        params = {
+            'retries': CONF.swift.swift_max_retries,
+            'preauthurl': preauthurl,
+            'preauthtoken': keystone.get_admin_auth_token(session)
+        }
+        # NOTE(pas-ha) swiftclient still (as of 3.3.0) does not use
+        # (adapter-based) SessionClient, and uses the passed in session
+        # only to resolve endpoint and get a token,
+        # but not to make further requests to Swift itself (LP 1736135).
+        # Thus we need to deconstruct back all the adapter- and
+        # session-related args as loaded by keystoneauth from config
+        # to pass them to the client explicitly.
+        # TODO(pas-ha) re-write this when swiftclient is brought on par
+        # with other OS clients re auth plugins, sessions and adapters
+        # support.
+        # TODO(pas-ha) pass the context here and use token from context
+        # with service auth
+        params['session'] = session = get_swift_session()
+        endpoint = keystone.get_endpoint('swift', session=session)
+        params['os_options'] = {'object_storage_url': endpoint}
+        # deconstruct back session-related options
+        params['timeout'] = session.timeout
+        if session.verify is False:
+            params['insecure'] = True
+        elif isinstance(session.verify, str):
+            params['cacert'] = session.verify
+        if session.cert:
+            # NOTE(pas-ha) although setting cert as path to single file
+            # with both client cert and key is supported by Session,
+            # keystoneauth loading always sets the session.cert
+            # as tuple of cert and key.
+            params['cert'], params['cert_key'] = session.cert
+
+        self.connection = swift_client.Connection(**params)
 
     def create_object(self, container, obj, filename,
                       object_headers=None):
@@ -117,10 +162,10 @@ class SwiftAPI(object):
         :returns: The temp url for the object.
         :raises: SwiftOperationError, if any operation with Swift fails.
         """
-        endpoint = keystone.get_endpoint('swift', session=get_swift_session())
-        parse_result = urlparse.urlparse(endpoint)
+        temp_url_key = self._get_temp_url_key()
+
+        parse_result = urlparse.urlparse(self.connection.url)
         swift_object_path = '/'.join((parse_result.path, container, obj))
-        temp_url_key = self.get_temp_url_key()
         if not temp_url_key:
             raise exception.MissingParameterValue(_(
                 'Swift temporary URLs require a shared secret to be '
@@ -132,10 +177,26 @@ class SwiftAPI(object):
             (parse_result.scheme, parse_result.netloc, url_path,
              None, None, None))
 
-    def generate_temp_url(self, path, timeout, method, temp_url_key):
-        """Returns the temp url for a given path"""
-        return self.connection.object_store.generate_temp_url(
-            path, timeout, method, temp_url_key=temp_url_key)
+    def _get_temp_url_key(self):
+        try:
+            account_info = self.connection.head_account()
+        except swift_exceptions.ClientException as e:
+            operation = _("head account")
+            raise exception.SwiftOperationError(operation=operation,
+                                                error=e)
+
+        temp_url_key = account_info.get('x-account-meta-temp-url-key', None)
+
+        if temp_url_key:
+            return temp_url_key
+
+        if CONF.swift.swift_set_temp_url_key:
+            temp_url_key = urlsafe_b64encode(urandom(30))
+            self.connection.post_account(headers={'x-account-meta-temp-url-key': temp_url_key})
+            return temp_url_key
+
+        operation = _("get temp-url-key")
+        raise exception.SwiftTempUrlKeyNotFoundError(operation=operation)
 
     def get_object(self, object, container):
         """Downloads a given object from Swift.

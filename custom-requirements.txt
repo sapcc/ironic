@@ -1,0 +1,21 @@
+jaeger-client
+git+https://github.com/sapcc/sentrylogger.git#egg=sapcc-sentrylogger
+redis
+
+# ironic driver dep
+python-openstackclient
+python-ilorest-library>=2.1.0
+hpOneView>=4.4.0
+
+# The Redfish hardware type uses the Sushy library
+# upstream has fwiesels changes starting from 2024.1
+git+https://github.com/sapcc/sushy.git@stable/2025.2-m3#egg=sushy
+# Dell EMC iDRAC sushy OEM extension
+git+https://github.com/openstack/sushy-oem-idrac.git@master#egg=sushy-oem-idrac
+
+# the inspector is going to get deprecated soon and we never used it
+git+https://github.com/sapcc/ironic-inspector@stable/2025.2#egg=ironic-inspector
+git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
+git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
+git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
+-e git+https://github.com/sapcc/python-agentliveness@master#egg=agentliveness
