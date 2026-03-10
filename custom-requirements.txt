@@ -14,7 +14,7 @@ git+https://github.com/sapcc/sushy.git@stable/2025.2-m3#egg=sushy
 git+https://github.com/openstack/sushy-oem-idrac.git@master#egg=sushy-oem-idrac
 
 # the inspector is going to get deprecated soon and we never used it
-git+https://github.com/sapcc/ironic-inspector@stable/2025.2#egg=ironic-inspector
+git+https://github.com/sapcc/ironic-inspector@stable/2025.2-m3#egg=ironic-inspector
 git+https://github.com/sapcc/openstack-watcher-middleware.git#egg=watcher-middleware
 git+https://github.com/sapcc/openstack-audit-middleware.git@master#egg=audit-middleware
 git+https://github.com/sapcc/ptftpd.git#egg=ptftpd
