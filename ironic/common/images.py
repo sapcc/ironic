@@ -28,6 +28,7 @@ from oslo_log import log as logging
 from oslo_utils import fileutils
 import pycdlib
 
+from ironic.common import checksum_utils
 from ironic.common import exception
 from ironic.common.glance_service import service_utils as glance_utils
 from ironic.common.i18n import _
@@ -386,9 +387,13 @@ def fetch_into(context, image_href, image_file):
               {'image_href': image_href, 'time': time.time() - start})
 
 
-def fetch(context, image_href, path, force_raw=False):
+def fetch(context, image_href, path, force_raw=False,
+          checksum=None, checksum_algo=None):
     with fileutils.remove_path_on_error(path):
         fetch_into(context, image_href, path)
+        if (not CONF.conductor.disable_file_checksum
+                and checksum):
+            checksum_utils.validate_checksum(path, checksum, checksum_algo)
     if force_raw:
         image_to_raw(image_href, path, "%s.part" % path)
 
@@ -487,7 +492,7 @@ def converted_size(path, estimate=False):
     if not estimate:
         return data.virtual_size
     growth_factor = CONF.raw_image_growth_factor
-    return int(min(data.disk_size * growth_factor, data.virtual_size))
+    return int(min(data.actual_size * growth_factor, data.virtual_size))
 
 
 def get_image_properties(context, image_href, properties="all"):
@@ -731,15 +736,22 @@ def _extract_iso(extract_iso, extract_dir):
     iso.open(extract_iso)
 
     for dirname, dirlist, filelist in iso.walk(iso_path='/'):
+        # NOTE(TheJulia): This code is confusing because the way the
+        # walk method returns data, basically a list of tuples to
+        # provide a structural mapping which a consumer of the walk
+        # data can use to understand the structure.
         dir_path = dirname.lstrip('/')
+        utils.check_iso_path(extract_dir, dir_path)
         for dir_iso in dirlist:
+            utils.check_iso_path(extract_dir,
+                                 os.path.join(dir_path, dir_iso))
             os.makedirs(os.path.join(extract_dir, dir_path, dir_iso))
         for file in filelist:
-            file_path = os.path.join(extract_dir, dirname, file)
+            utils.check_iso_path(extract_dir, dir_path, file)
+            file_path = os.path.join(dirname, file)
             iso.get_file_from_iso(
                 os.path.join(extract_dir, dir_path, file),
                 iso_path=file_path)
-
     iso.close()
 
 

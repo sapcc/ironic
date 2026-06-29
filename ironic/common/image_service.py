@@ -229,6 +229,41 @@ class HttpImageService(BaseImageService):
             'no_cache': no_cache,
         }
 
+    @staticmethod
+    def get(image_href):
+        """Downloads content and returns the response text.
+
+        :param image_href: Image reference.
+        :raises: exception.ImageRefValidationFailed if GET request returned
+            response code not equal to 200.
+        :raises: exception.ImageDownloadFailed if:
+            * IOError happened during file write;
+            * GET request failed.
+        """
+
+        try:
+
+            verify = strutils.bool_from_string(CONF.webserver_verify_ca,
+                                               strict=True)
+        except ValueError:
+            verify = CONF.webserver_verify_ca
+
+        try:
+            response = requests.get(image_href, stream=False, verify=verify,
+                                    timeout=CONF.webserver_connection_timeout)
+            if response.status_code != http_client.OK:
+                raise exception.ImageRefValidationFailed(
+                    image_href=image_href,
+                    reason=_("Got HTTP code %s instead of 200 in response "
+                             "to GET request.") % response.status_code)
+
+            return response.text
+
+        except (OSError, requests.ConnectionError, requests.RequestException,
+                IOError) as e:
+            raise exception.ImageDownloadFailed(image_href=image_href,
+                                                reason=str(e))
+
 
 class FileImageService(BaseImageService):
     """Provides retrieval of disk images available locally on the conductor."""
@@ -238,14 +273,33 @@ class FileImageService(BaseImageService):
 
         :param image_href: Image reference.
         :raises: exception.ImageRefValidationFailed if source image file
-            doesn't exist.
-        :returns: Path to image file if it exists.
+            doesn't exist, is in a blocked path, or is not in an allowed path.
+        :returns: Path to image file if it exists and is allowed.
         """
+        # TODO(TheJulia): Validate there are *THREE* slashes in the file path
+        # URL, otherwise urlparse doesn't split it properly.
         image_path = urlparse.urlparse(image_href).path
+        # Check if the path is in the blocklist
+        rpath = os.path.abspath(image_path)
+
+        # Check if the path is in the allowlist
+        for allowed in CONF.conductor.file_url_allowed_paths:
+            if rpath == allowed or rpath.startswith(allowed + os.sep):
+                break
+        else:
+            raise exception.ImageRefValidationFailed(
+                image_href=image_href,
+                reason=_(
+                    "Security: Path %s is not allowed for image source "
+                    "file URLs" % image_path)
+            )
+
+        # Check if the file exists
         if not os.path.isfile(image_path):
             raise exception.ImageRefValidationFailed(
                 image_href=image_href,
                 reason=_("Specified image file not found."))
+
         return image_path
 
     def download(self, image_href, image_file):

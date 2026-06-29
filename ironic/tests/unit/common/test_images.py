@@ -23,6 +23,8 @@ from unittest import mock
 
 from oslo_concurrency import processutils
 from oslo_config import cfg
+from oslo_utils import fileutils
+import pycdlib
 
 from ironic.common import exception
 from ironic.common.glance_service import service_utils as glance_utils
@@ -67,6 +69,100 @@ class IronicImagesTestCase(base.TestCase):
 
         images.fetch('context', 'image_href', 'path', force_raw=True)
 
+        open_mock.assert_called_once_with('path', 'wb')
+        image_service_mock.return_value.download.assert_called_once_with(
+            'image_href', 'file')
+        image_to_raw_mock.assert_called_once_with(
+            'image_href', 'path', 'path.part')
+
+    @mock.patch.object(fileutils, 'compute_file_checksum',
+                       autospec=True)
+    @mock.patch.object(image_service, 'get_image_service', autospec=True)
+    @mock.patch.object(images, 'image_to_raw', autospec=True)
+    @mock.patch.object(builtins, 'open', autospec=True)
+    def test_fetch_image_service_force_raw_with_checksum(
+            self, open_mock, image_to_raw_mock,
+            image_service_mock, mock_checksum):
+        mock_file_handle = mock.MagicMock(spec=io.BytesIO)
+        mock_file_handle.__enter__.return_value = 'file'
+        open_mock.return_value = mock_file_handle
+        mock_checksum.return_value = 'f00'
+
+        images.fetch('context', 'image_href', 'path', force_raw=True,
+                     checksum='f00', checksum_algo='sha256')
+
+        mock_checksum.assert_called_once_with('path', algorithm='sha256')
+        open_mock.assert_called_once_with('path', 'wb')
+        image_service_mock.return_value.download.assert_called_once_with(
+            'image_href', 'file')
+        image_to_raw_mock.assert_called_once_with(
+            'image_href', 'path', 'path.part')
+
+    @mock.patch.object(fileutils, 'compute_file_checksum',
+                       autospec=True)
+    @mock.patch.object(image_service, 'get_image_service', autospec=True)
+    @mock.patch.object(images, 'image_to_raw', autospec=True)
+    @mock.patch.object(builtins, 'open', autospec=True)
+    def test_fetch_image_service_with_checksum_mismatch(
+            self, open_mock, image_to_raw_mock,
+            image_service_mock, mock_checksum):
+        mock_file_handle = mock.MagicMock(spec=io.BytesIO)
+        mock_file_handle.__enter__.return_value = 'file'
+        open_mock.return_value = mock_file_handle
+        mock_checksum.return_value = 'a00'
+
+        self.assertRaises(exception.ImageChecksumError,
+                          images.fetch, 'context', 'image_href',
+                          'path', force_raw=True,
+                          checksum='f00', checksum_algo='sha256')
+
+        mock_checksum.assert_called_once_with('path', algorithm='sha256')
+        open_mock.assert_called_once_with('path', 'wb')
+        image_service_mock.return_value.download.assert_called_once_with(
+            'image_href', 'file')
+        # If the checksum fails, then we don't attempt to convert the image.
+        image_to_raw_mock.assert_not_called()
+
+    @mock.patch.object(fileutils, 'compute_file_checksum',
+                       autospec=True)
+    @mock.patch.object(image_service, 'get_image_service', autospec=True)
+    @mock.patch.object(images, 'image_to_raw', autospec=True)
+    @mock.patch.object(builtins, 'open', autospec=True)
+    def test_fetch_image_service_force_raw_no_checksum_algo(
+            self, open_mock, image_to_raw_mock,
+            image_service_mock, mock_checksum):
+        mock_file_handle = mock.MagicMock(spec=io.BytesIO)
+        mock_file_handle.__enter__.return_value = 'file'
+        open_mock.return_value = mock_file_handle
+        mock_checksum.return_value = 'f00'
+
+        images.fetch('context', 'image_href', 'path', force_raw=True,
+                     checksum='f00')
+
+        mock_checksum.assert_called_once_with('path', algorithm='md5')
+        open_mock.assert_called_once_with('path', 'wb')
+        image_service_mock.return_value.download.assert_called_once_with(
+            'image_href', 'file')
+        image_to_raw_mock.assert_called_once_with(
+            'image_href', 'path', 'path.part')
+
+    @mock.patch.object(fileutils, 'compute_file_checksum',
+                       autospec=True)
+    @mock.patch.object(image_service, 'get_image_service', autospec=True)
+    @mock.patch.object(images, 'image_to_raw', autospec=True)
+    @mock.patch.object(builtins, 'open', autospec=True)
+    def test_fetch_image_service_force_raw_combined_algo(
+            self, open_mock, image_to_raw_mock,
+            image_service_mock, mock_checksum):
+        mock_file_handle = mock.MagicMock(spec=io.BytesIO)
+        mock_file_handle.__enter__.return_value = 'file'
+        open_mock.return_value = mock_file_handle
+        mock_checksum.return_value = 'f00'
+
+        images.fetch('context', 'image_href', 'path', force_raw=True,
+                     checksum='sha512:f00')
+
+        mock_checksum.assert_called_once_with('path', algorithm='sha512')
         open_mock.assert_called_once_with('path', 'wb')
         image_service_mock.return_value.download.assert_called_once_with(
             'image_href', 'file')
@@ -278,7 +374,7 @@ class IronicImagesTestCase(base.TestCase):
                        autospec=True)
     def test_converted_size_estimate_default(self, image_info_mock):
         info = self.FakeImgInfo()
-        info.disk_size = 2
+        info.actual_size = 2
         info.virtual_size = 10 ** 10
         image_info_mock.return_value = info
         size = images.converted_size('path', estimate=True)
@@ -290,7 +386,7 @@ class IronicImagesTestCase(base.TestCase):
     def test_converted_size_estimate_custom(self, image_info_mock):
         CONF.set_override('raw_image_growth_factor', 3)
         info = self.FakeImgInfo()
-        info.disk_size = 2
+        info.actual_size = 2
         info.virtual_size = 10 ** 10
         image_info_mock.return_value = info
         size = images.converted_size('path', estimate=True)
@@ -302,7 +398,7 @@ class IronicImagesTestCase(base.TestCase):
     def test_converted_size_estimate_raw_smaller(self, image_info_mock):
         CONF.set_override('raw_image_growth_factor', 3)
         info = self.FakeImgInfo()
-        info.disk_size = 2
+        info.actual_size = 2
         info.virtual_size = 5
         image_info_mock.return_value = info
         size = images.converted_size('path', estimate=True)
@@ -567,6 +663,116 @@ class FsImageTestCase(base.TestCase):
                                    CONF.grub_config_template,
                                    options)
         self.assertEqual(expected_cfg, cfg)
+
+    @mock.patch.object(os, 'makedirs', autospec=True)
+    @mock.patch('pycdlib.PyCdlib', autospec=True)
+    def test__extract_iso(self, mock_pycdlib_cls, mock_makedirs):
+        mock_iso = mock_pycdlib_cls.return_value
+        mock_iso.walk.return_value = [
+            ('/', ['BOOT'], ['README.TXT']),
+            ('/BOOT', ['GRUB'], ['BOOTX64.EFI']),
+            ('/BOOT/GRUB', [], ['GRUB.CFG']),
+        ]
+
+        images._extract_iso('/path/to/image.iso', '/extract')
+
+        mock_iso.open.assert_called_once_with('/path/to/image.iso')
+        mock_iso.walk.assert_called_once_with(iso_path='/')
+        mock_makedirs.assert_any_call(
+            os.path.join('/extract', '', 'BOOT'))
+        mock_makedirs.assert_any_call(
+            os.path.join('/extract', 'BOOT', 'GRUB'))
+        mock_iso.get_file_from_iso.assert_any_call(
+            os.path.join('/extract', '', 'README.TXT'),
+            iso_path=os.path.join('/extract', '/', 'README.TXT'))
+        mock_iso.get_file_from_iso.assert_any_call(
+            os.path.join('/extract', 'BOOT', 'BOOTX64.EFI'),
+            iso_path=os.path.join('/extract', '/BOOT',
+                                  'BOOTX64.EFI'))
+        mock_iso.get_file_from_iso.assert_any_call(
+            os.path.join('/extract', 'BOOT/GRUB', 'GRUB.CFG'),
+            iso_path=os.path.join('/extract', '/BOOT/GRUB',
+                                  'GRUB.CFG'))
+        self.assertEqual(3, mock_iso.get_file_from_iso.call_count)
+        mock_iso.close.assert_called_once()
+
+    @mock.patch('pycdlib.PyCdlib', autospec=True)
+    def test__extract_iso_empty(self, mock_pycdlib_cls):
+        mock_iso = mock_pycdlib_cls.return_value
+        mock_iso.walk.return_value = [
+            ('/', [], []),
+        ]
+
+        images._extract_iso('/path/to/empty.iso', '/extract')
+
+        mock_iso.open.assert_called_once_with('/path/to/empty.iso')
+        mock_iso.walk.assert_called_once_with(iso_path='/')
+        mock_iso.get_file_from_iso.assert_not_called()
+        mock_iso.close.assert_called_once()
+
+    @mock.patch('pycdlib.PyCdlib', autospec=True)
+    def test__extract_iso_open_fails(self, mock_pycdlib_cls):
+        mock_iso = mock_pycdlib_cls.return_value
+        mock_iso.open.side_effect = (
+            pycdlib.pycdlibexception.PyCdlibInvalidInput(
+                msg='Could not open file'))
+
+        self.assertRaises(
+            pycdlib.pycdlibexception.PyCdlibInvalidInput,
+            images._extract_iso,
+            '/path/to/bad.iso', '/extract')
+        mock_iso.walk.assert_not_called()
+        mock_iso.close.assert_not_called()
+
+    @mock.patch.object(os, 'makedirs', autospec=True)
+    @mock.patch('pycdlib.PyCdlib', autospec=True)
+    def test__extract_iso_invalid_file(self, mock_pycdlib_cls, mock_makedirs):
+        mock_iso = mock_pycdlib_cls.return_value
+        mock_iso.walk.return_value = [
+            ('/', ['BOOT'], ['README.TXT']),
+            ('/BOOT', ['GRUB'], ['../TX64.EFI']),
+            ('/BOOT/GRUB', [], ['GRUB.CFG']),
+        ]
+
+        self.assertRaises(exception.InvalidContent,
+                          images._extract_iso,
+                          '/path/to/image.iso', '/extract')
+
+        mock_iso.open.assert_called_once_with('/path/to/image.iso')
+        mock_iso.walk.assert_called_once_with(iso_path='/')
+        mock_makedirs.assert_any_call(
+            os.path.join('/extract', '', 'BOOT'))
+        mock_makedirs.assert_any_call(
+            os.path.join('/extract', 'BOOT', 'GRUB'))
+        mock_iso.get_file_from_iso.assert_any_call(
+            os.path.join('/extract', '', 'README.TXT'),
+            iso_path=os.path.join('/extract', '/', 'README.TXT'))
+        self.assertEqual(1, mock_iso.get_file_from_iso.call_count)
+
+    @mock.patch.object(os, 'makedirs', autospec=True)
+    @mock.patch('pycdlib.PyCdlib', autospec=True)
+    def test__extract_iso_invalid_folder(self, mock_pycdlib_cls,
+                                         mock_makedirs):
+        mock_iso = mock_pycdlib_cls.return_value
+        mock_iso.walk.return_value = [
+            ('/', ['BOOT'], ['README.TXT']),
+            ('/../T', ['GRUB'], ['BOOTX64.EFI']),
+            ('/BOOT/GRUB', [], ['GRUB.CFG']),
+        ]
+
+        self.assertRaises(exception.InvalidContent,
+                          images._extract_iso,
+                          '/path/to/image.iso', '/extract')
+
+        mock_iso.open.assert_called_once_with('/path/to/image.iso')
+        mock_iso.walk.assert_called_once_with(iso_path='/')
+        mock_makedirs.assert_any_call(
+            os.path.join('/extract', '', 'BOOT'))
+        self.assertEqual(1, mock_makedirs.call_count)
+        mock_iso.get_file_from_iso.assert_any_call(
+            os.path.join('/extract', '', 'README.TXT'),
+            iso_path=os.path.join('/extract', '/', 'README.TXT'))
+        self.assertEqual(1, mock_iso.get_file_from_iso.call_count)
 
     @mock.patch.object(os.path, 'relpath', autospec=True)
     @mock.patch.object(os, 'walk', autospec=True)

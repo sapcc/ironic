@@ -19,6 +19,8 @@ from oslo_config import cfg
 from oslo_config import types
 
 from ironic.common.i18n import _
+from ironic.conf import types as ir_types
+
 
 opts = [
     cfg.IntOpt('workers_pool_size',
@@ -392,6 +394,54 @@ opts = [
                        'permitted for deployment with Ironic. If an image '
                        'format outside of this list is detected, the image '
                        'validation logic will fail the deployment process.')),
+    cfg.BoolOpt('disable_file_checksum',
+                default=False,
+                mutable=False,
+                help=_('Deprecated Security option: In the default case, '
+                       'image files have their checksums verified before '
+                       'undergoing additional conductor side actions such '
+                       'as image conversion. '
+                       'Enabling this option opens the risk of files being '
+                       'replaced at the source without the user\'s '
+                       'knowledge.'),
+                deprecated_for_removal=True),
+    cfg.BoolOpt('disable_support_for_checksum_files',
+                default=False,
+                mutable=False,
+                help=_('Security option: By default Ironic will attempt to '
+                       'retrieve a remote checksum file via HTTP(S) URL in '
+                       'order to validate an image download. This is '
+                       'functionality aligning with ironic-python-agent '
+                       'support for standalone users. Disabling this '
+                       'functionality by setting this option to True will '
+                       'create a more secure environment, however it may '
+                       'break users in an unexpected fashion.')),
+    cfg.ListOpt('file_url_allowed_paths',
+                default=['/var/lib/ironic', '/shared/html', '/templates',
+                         '/opt/cache/files', '/vagrant'],
+                item_type=ir_types.ExplicitAbsolutePath(),
+                help=_(
+                    'List of paths that are allowed to be used as file:// '
+                    'URLs. Files in /boot, /dev, /etc, /proc, /sys and other'
+                    'system paths are always disallowed for security reasons. '
+                    'Any files in this path readable by ironic may be used as '
+                    'an image source when deploying. Setting this value to '
+                    '"" (empty) disables file:// URL support. Paths listed '
+                    'here are validated as absolute paths and will be rejected'
+                    'if they contain path traversal mechanisms, such as "..".'
+                )),
+    cfg.BoolOpt('disable_kernel_parameter_parsing',
+                default=False,
+                # Normally such an option would be mutable, but this is,
+                # a security guard and operators should not expect to change
+                # this option under normal circumstances.
+                mutable=False,
+                help=_('Disable parsing of kernel parameters. Kernel '
+                       'parameter parsing allows Ironic to detect and prevent '
+                       'malformed kernel parameters before they are passed to '
+                       'nodes. Malformed kernel parameters can pose a '
+                       'security risk therefore it is not recommended to '
+                       'disable this option unless absolutely necessary.')),
 ]
 
 
