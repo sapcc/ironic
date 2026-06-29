@@ -464,9 +464,22 @@ def get_ipxe_config_template(node):
     # loaders by architecture as they are all consistent. Where as PXE
     # could need to be grub for one arch, PXELINUX for another.
     configured_template = CONF.pxe.ipxe_config_template
-    override_template = node.driver_info.get('pxe_template')
-    if override_template:
-        configured_template = override_template
+    insecure_override_template = node.driver_info.get('pxe_template')
+    if CONF.pxe.enable_insecure_template_override:
+        # TODO(TheJulia): Remove the node level pxe_template setting in
+        # a future release as it is inhernetly insecure.
+        if insecure_override_template:
+            configured_template = insecure_override_template
+    elif insecure_override_template:
+        raise exception.InvalidParameterValue(_(
+            'The node\'s driver_info field pxe_template override value is '
+            'insecure (CVE-2026-44917) and should not be used. The '
+            'appropriate approach is to utilize [pxe]ipxe_template_by_arch '
+            'configuration in ironic.conf to match the baremetal node\'s '
+            'architecture. Please work with your Ironic operator to remedy '
+            'your usage and configuration. Default templates may be '
+            'leveraged by deleting the pxe_template value in the driver_info '
+            'field.'))
     return configured_template or get_pxe_config_template(node)
 
 
@@ -481,7 +494,22 @@ def get_pxe_config_template(node):
     :param node: A single Node.
     :returns: The PXE config template file name.
     """
-    config_template = node.driver_info.get("pxe_template", None)
+    config_template = None
+    insecure_override_template = node.driver_info.get("pxe_template", None)
+    if CONF.pxe.enable_insecure_template_override:
+        # TODO(TheJulia): Remove the node level pxe_template setting in
+        # a future release as it is inhernetly insecure.
+        config_template = insecure_override_template
+    elif insecure_override_template:
+        raise exception.InvalidParameterValue(_(
+            'The node\'s driver_info field pxe_template override value is '
+            'insecure (CVE-2026-44917) and should not be used. The '
+            'appropriate approach is to utilize [pxe]pxe_template_by_arch '
+            'configuration in ironic.conf to match the baremetal node\'s '
+            'architecture. Please work with your Ironic operator to remedy '
+            'your usage and configuration. Default templates may be '
+            'leveraged by deleting the pxe_template value in the driver_info '
+            'field.'))
     if config_template is None:
         cpu_arch = node.properties.get('cpu_arch')
         config_template = CONF.pxe.pxe_config_template_by_arch.get(cpu_arch)
@@ -1316,6 +1344,8 @@ def build_instance_info_for_deploy(task):
     # and gets replaced at various points in this sequence.
     instance_info['image_url'] = None
 
+    is_file_url = image_source.startswith('file://')
+
     if service_utils.is_glance_image(image_source):
         glance = image_service.GlanceImageService(context=task.context)
         image_info = glance.show(image_source)
@@ -1357,8 +1387,7 @@ def build_instance_info_for_deploy(task):
         if not iwdi and boot_option != 'local':
             instance_info['kernel'] = image_info['properties']['kernel_id']
             instance_info['ramdisk'] = image_info['properties']['ramdisk_id']
-    elif (image_source.startswith('file://')
-          or image_download_source == 'local'):
+    elif (is_file_url or image_download_source == 'local'):
         # In this case, we're explicitly downloading (or copying a file)
         # hosted locally so IPA can download it directly from Ironic.
 
@@ -1366,7 +1395,12 @@ def build_instance_info_for_deploy(task):
         # based deploy source since we don't want to, nor should we be in
         # in the business of copying large numbers of files as it is a
         # huge performance impact.
-
+        if is_file_url:
+            # In this case, we need to validate the URL first before
+            # moving on to _cache_and_convert_image, because it's whole
+            # existence is to download, checksum, convert, etc.
+            image_service.FileImageService().validate_href(
+                image_href=image_source)
         _cache_and_convert_image(task, instance_info)
     else:
         # This is the "all other cases" logic for aspects like the user

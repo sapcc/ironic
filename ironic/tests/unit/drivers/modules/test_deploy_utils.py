@@ -423,12 +423,24 @@ class GetPxeBootConfigTestCase(db_base.DbTestCase):
         self.assertEqual('bios-template', result)
 
     def test_get_pxe_config_template_per_node(self):
+        cfg.CONF.set_override('enable_insecure_template_override', True,
+                              group='pxe')
         node = obj_utils.create_test_node(
             self.context, driver='fake-hardware',
             driver_info={"pxe_template": "fake-template"},
         )
         result = utils.get_pxe_config_template(node)
         self.assertEqual('fake-template', result)
+
+    def test_get_pxe_config_template_per_node_disabled(self):
+        self.assertFalse(cfg.CONF.pxe.enable_insecure_template_override)
+        node = obj_utils.create_test_node(
+            self.context, driver='fake-hardware',
+            driver_info={"pxe_template": "fake-template"},
+        )
+        self.assertRaisesRegex(
+            exception.InvalidParameterValue, 'CVE-2026-44917',
+            utils.get_pxe_config_template, node)
 
     def test_get_ipxe_config_template(self):
         node = obj_utils.create_test_node(
@@ -456,11 +468,22 @@ class GetPxeBootConfigTestCase(db_base.DbTestCase):
                          utils.get_ipxe_config_template(node))
 
     def test_get_ipxe_config_template_override_pxe_fallback(self):
+        cfg.CONF.set_override('enable_insecure_template_override', True,
+                              group='pxe')
         node = obj_utils.create_test_node(
             self.context, driver='fake-hardware',
             driver_info={'pxe_template': 'magical'})
         self.assertEqual('magical',
                          utils.get_ipxe_config_template(node))
+
+    def test_get_ipxe_config_template_override_pxe_fallback_disabled(self):
+        self.assertFalse(cfg.CONF.pxe.enable_insecure_template_override)
+        node = obj_utils.create_test_node(
+            self.context, driver='fake-hardware',
+            driver_info={'pxe_template': 'magical'})
+        self.assertRaisesRegex(
+            exception.InvalidParameterValue, 'CVE-2026-44917',
+            utils.get_ipxe_config_template, node)
 
 
 @mock.patch('time.sleep', lambda sec: None)
@@ -2366,6 +2389,54 @@ class TestBuildInstanceInfoForDeploy(db_base.DbTestCase):
             self.assertEqual('https://image-url/file',
                              task.node.instance_info['image_source'])
 
+    @mock.patch.object(os.path, 'isfile', autospec=True)
+    @mock.patch.object(utils, '_cache_and_convert_image', autospec=True)
+    def test_build_instance_info_for_deploy_file_url_valid(
+            self, mock_cache_image, mock_isfile):
+        i_info = self.node.instance_info
+        driver_internal_info = self.node.driver_internal_info
+        i_info['image_source'] = 'file:///var/lib/ironic/files/foo/bar'
+        driver_internal_info['is_whole_disk_image'] = True
+        self.node.instance_info = i_info
+        self.node.driver_internal_info = driver_internal_info
+        self.node.save()
+        mock_isfile.return_value = True
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+
+            utils.build_instance_info_for_deploy(task)
+            mock_cache_image.assert_called_once_with(
+                mock.ANY,
+                {'configdrive': 'TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQ=',
+                 'image_url': None,
+                 'foo': 'bar',
+                 'image_source': 'file:///var/lib/ironic/files/foo/bar',
+                 'image_type': 'whole-disk'})
+
+    @mock.patch.object(utils, 'cache_instance_image', autospec=True)
+    def test_build_instance_info_for_deploy_file_url_invalid(
+            self, mock_cache_image):
+        mock_cache_image.return_value = ('fake', '/tmp/foo', 'qcow2')
+        i_info = self.node.instance_info
+        driver_internal_info = self.node.driver_internal_info
+        url = 'file:///dev/zero'
+        i_info['image_source'] = url
+        self.node.instance_info = i_info
+        driver_internal_info['is_whole_disk_image'] = True
+        self.node.driver_internal_info = driver_internal_info
+        self.node.save()
+
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+            self.assertRaisesRegex(
+                exception.ImageRefValidationFailed,
+                'Validation of image href file:///dev/zero failed, reason: '
+                'Security: Path /dev/zero is not allowed for image source '
+                'file URLs',
+                utils.build_instance_info_for_deploy, task)
+
+            mock_cache_image.assert_not_called()
+
 
 class TestBuildInstanceInfoForHttpProvisioning(db_base.DbTestCase):
     def setUp(self):
@@ -2505,41 +2576,6 @@ class TestBuildInstanceInfoForHttpProvisioning(db_base.DbTestCase):
         self.assertEqual(instance_info['image_checksum'], 'aa')
         self.assertEqual(instance_info['image_disk_format'], 'raw')
         self.checksum_mock.assert_not_called()
-
-    @mock.patch.object(image_service.HttpImageService, 'validate_href',
-                       autospec=True)
-    def test_build_instance_info_file_image(self, validate_href_mock):
-        i_info = self.node.instance_info
-        driver_internal_info = self.node.driver_internal_info
-        i_info['image_source'] = 'file://image-ref'
-        i_info['image_checksum'] = 'aa'
-        i_info['root_gb'] = 10
-        driver_internal_info['is_whole_disk_image'] = True
-        self.node.instance_info = i_info
-        self.node.driver_internal_info = driver_internal_info
-        self.node.save()
-
-        expected_url = (
-            'http://172.172.24.10:8080/agent_images/%s' % self.node.uuid)
-
-        with task_manager.acquire(
-                self.context, self.node.uuid, shared=False) as task:
-
-            info = utils.build_instance_info_for_deploy(task)
-
-            self.assertEqual(expected_url, info['image_url'])
-            self.assertEqual('sha256', info['image_os_hash_algo'])
-            self.assertEqual('fake-checksum', info['image_os_hash_value'])
-            self.assertEqual('raw', info['image_disk_format'])
-            self.cache_image_mock.assert_called_once_with(
-                task.context, task.node, force_raw=True,
-                expected_format=None,
-                expected_checksum='aa',
-                expected_checksum_algo=None)
-            self.checksum_mock.assert_called_once_with(
-                self.fake_path, algorithm='sha256')
-            validate_href_mock.assert_called_once_with(
-                mock.ANY, expected_url, False)
 
     @mock.patch.object(image_service.HttpImageService, 'validate_href',
                        autospec=True)
