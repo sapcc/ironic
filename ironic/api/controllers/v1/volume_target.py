@@ -14,6 +14,7 @@
 
 from http import client as http_client
 
+from oslo_utils import strutils
 from oslo_utils import uuidutils
 from pecan import rest
 
@@ -90,9 +91,16 @@ def convert_with_links(rpc_target, fields=None, sanitize=True):
     if not sanitize:
         return target
 
-    api_utils.sanitize_dict(target, fields)
+    target_sanitize(target, fields)
 
     return target
+
+
+def target_sanitize(target, fields=None):
+    api_utils.sanitize_dict(target, fields)
+    if target.get('properties'):
+        target['properties'] = strutils.mask_dict_password(
+            target['properties'], "******")
 
 
 def list_convert_with_links(rpc_targets, limit, url, fields=None,
@@ -106,7 +114,7 @@ def list_convert_with_links(rpc_targets, limit, url, fields=None,
         limit=limit,
         url=url,
         fields=fields,
-        sanitize_func=api_utils.sanitize_dict,
+        sanitize_func=target_sanitize,
         **kwargs
     )
 
@@ -345,9 +353,8 @@ class VolumeTargetsController(rest.RestController):
         """
         context = api.request.context
 
-        api_utils.check_volume_policy_and_retrieve('baremetal:volume:update',
-                                                   target_uuid,
-                                                   target=True)
+        rpc_target, rpc_node = api_utils.check_volume_policy_and_retrieve(
+            'baremetal:volume:update', target_uuid, target=True)
 
         if self.parent_node_ident:
             raise exception.MalformedRequestURI()
@@ -361,29 +368,17 @@ class VolumeTargetsController(rest.RestController):
                             "%(uuid)s.") % {'uuid': str(value)}
                 raise exception.InvalidUUID(message=message)
 
-        rpc_target = objects.VolumeTarget.get_by_uuid(context, target_uuid)
         target_dict = rpc_target.as_dict()
-        # NOTE(smoriya):
-        # 1) Remove node_id because it's an internal value and
+        # NOTE(smoriya): Remove node_id because it's an internal value and
         #    not present in the API object
-        # 2) Add node_uuid
-        rpc_node = api_utils.replace_node_id_with_uuid(target_dict)
+        target_dict.pop('node_id', None)
+        # NOTE(dtantsur): Patch won't apply if the field does not exist.
+        target_dict['node_uuid'] = None
 
+        rpc_node = api_utils.authorize_node_link_patch(
+            rpc_node, patch, 'node_uuid')
         target_dict = api_utils.apply_jsonpatch(target_dict, patch)
-
-        try:
-            if target_dict['node_uuid'] != rpc_node.uuid:
-
-                # TODO(TheJulia): I guess the intention is to
-                # permit the mapping to be changed
-                # should we even allow this at all?
-                rpc_node = objects.Node.get(
-                    api.request.context, target_dict['node_uuid'])
-        except exception.NodeNotFound as e:
-            # Change error code because 404 (NotFound) is inappropriate
-            # response for a PATCH request to change a volume target
-            e.code = http_client.BAD_REQUEST  # BadRequest
-            raise
+        target_dict['node_uuid'] = rpc_node.uuid
 
         api_utils.patched_validate_with_schema(
             target_dict, TARGET_SCHEMA, TARGET_VALIDATOR)
@@ -401,9 +396,15 @@ class VolumeTargetsController(rest.RestController):
             new_target = api.request.rpcapi.update_volume_target(
                 context, rpc_target, topic)
 
-        api_target = convert_with_links(new_target)
         notify.emit_end_notification(context, new_target, 'update',
                                      node_uuid=rpc_node.uuid)
+
+        cdict = api.request.context.to_policy_values()
+        if not policy.check_policy('baremetal:volume:view_target_properties',
+                                   cdict, cdict):
+            self._redact_target_properties(new_target)
+
+        api_target = convert_with_links(new_target)
         return api_target
 
     @METRICS.timer('VolumeTargetsController.delete')

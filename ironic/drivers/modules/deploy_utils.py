@@ -400,16 +400,23 @@ def get_pxe_boot_file(node):
     """Return the PXE boot file name requested for deploy.
 
     This method returns PXE boot file name to be used for deploy.
-    Architecture specific boot file is searched first. BIOS/UEFI
-    boot file is used if no valid architecture specific file found.
+    Architecture and boot mode specific boot file is searched first
+    using a composite key of ``arch-boot_mode`` (e.g. ``x86_64-uefi``).
+    If not found, architecture-only key is tried for backward
+    compatibility. BIOS/UEFI boot file is used if no valid
+    architecture specific file found.
 
     :param node: A single Node.
     :returns: The PXE boot file name.
     """
     cpu_arch = node.properties.get('cpu_arch')
-    boot_file = CONF.pxe.pxe_bootfile_name_by_arch.get(cpu_arch)
+    boot_mode = boot_mode_utils.get_boot_mode(node)
+    boot_file = CONF.pxe.pxe_bootfile_name_by_arch.get(
+        '%s-%s' % (cpu_arch, boot_mode))
     if boot_file is None:
-        if boot_mode_utils.get_boot_mode(node) == 'uefi':
+        boot_file = CONF.pxe.pxe_bootfile_name_by_arch.get(cpu_arch)
+    if boot_file is None:
+        if boot_mode == 'uefi':
             boot_file = CONF.pxe.uefi_pxe_bootfile_name
         else:
             boot_file = CONF.pxe.pxe_bootfile_name
@@ -421,8 +428,11 @@ def get_ipxe_boot_file(node):
     """Return the iPXE boot file name requested for deploy.
 
     This method returns iPXE boot file name to be used for deploy.
-    Architecture specific boot file is searched first. BIOS/UEFI
-    boot file is used if no valid architecture specific file found.
+    Architecture and boot mode specific boot file is searched first
+    using a composite key of ``arch-boot_mode`` (e.g. ``x86_64-bios``).
+    If not found, architecture-only key is tried for backward
+    compatibility. BIOS/UEFI boot file is used if no valid
+    architecture specific file found.
 
     If no valid value is found, the default reverts to the
     ``get_pxe_boot_file`` method and thus the
@@ -433,9 +443,13 @@ def get_ipxe_boot_file(node):
     :returns: The iPXE boot file name.
     """
     cpu_arch = node.properties.get('cpu_arch')
-    boot_file = CONF.pxe.ipxe_bootfile_name_by_arch.get(cpu_arch)
+    boot_mode = boot_mode_utils.get_boot_mode(node)
+    boot_file = CONF.pxe.ipxe_bootfile_name_by_arch.get(
+        '%s-%s' % (cpu_arch, boot_mode))
     if boot_file is None:
-        if boot_mode_utils.get_boot_mode(node) == 'uefi':
+        boot_file = CONF.pxe.ipxe_bootfile_name_by_arch.get(cpu_arch)
+    if boot_file is None:
+        if boot_mode == 'uefi':
             boot_file = CONF.pxe.uefi_ipxe_bootfile_name
         else:
             boot_file = CONF.pxe.ipxe_bootfile_name
@@ -459,9 +473,22 @@ def get_ipxe_config_template(node):
     # loaders by architecture as they are all consistent. Where as PXE
     # could need to be grub for one arch, PXELINUX for another.
     configured_template = CONF.pxe.ipxe_config_template
-    override_template = node.driver_info.get('pxe_template')
-    if override_template:
-        configured_template = override_template
+    insecure_override_template = node.driver_info.get('pxe_template')
+    if CONF.pxe.enable_insecure_template_override:
+        # TODO(TheJulia): Remove the node level pxe_template setting in
+        # a future release as it is inhernetly insecure.
+        if insecure_override_template:
+            configured_template = insecure_override_template
+    elif insecure_override_template:
+        raise exception.InvalidParameterValue(_(
+            'The node\'s driver_info field pxe_template override value is '
+            'insecure (CVE-2026-44917) and should not be used. The '
+            'appropriate approach is to utilize [pxe]ipxe_template_by_arch '
+            'configuration in ironic.conf to match the baremetal node\'s '
+            'architecture. Please work with your Ironic operator to remedy '
+            'your usage and configuration. Default templates may be '
+            'leveraged by deleting the pxe_template value in the driver_info '
+            'field.'))
     return configured_template or get_pxe_config_template(node)
 
 
@@ -476,7 +503,22 @@ def get_pxe_config_template(node):
     :param node: A single Node.
     :returns: The PXE config template file name.
     """
-    config_template = node.driver_info.get("pxe_template", None)
+    config_template = None
+    insecure_override_template = node.driver_info.get("pxe_template", None)
+    if CONF.pxe.enable_insecure_template_override:
+        # TODO(TheJulia): Remove the node level pxe_template setting in
+        # a future release as it is inhernetly insecure.
+        config_template = insecure_override_template
+    elif insecure_override_template:
+        raise exception.InvalidParameterValue(_(
+            'The node\'s driver_info field pxe_template override value is '
+            'insecure (CVE-2026-44917) and should not be used. The '
+            'appropriate approach is to utilize [pxe]pxe_template_by_arch '
+            'configuration in ironic.conf to match the baremetal node\'s '
+            'architecture. Please work with your Ironic operator to remedy '
+            'your usage and configuration. Default templates may be '
+            'leveraged by deleting the pxe_template value in the driver_info '
+            'field.'))
     if config_template is None:
         cpu_arch = node.properties.get('cpu_arch')
         config_template = CONF.pxe.pxe_config_template_by_arch.get(cpu_arch)
@@ -1257,6 +1299,11 @@ def _validate_image_url(node, url, secret=False, inspect_image=None,
 def _cache_and_convert_image(task, instance_info, image_info=None):
     """Cache an image locally and convert it to RAW if needed.
 
+    Caches the supplied image as defined in the request, and converts it
+    to raw if required. This method should only be called once initial
+    first pass validation has been performed and can be called on multiple
+    code paths where the file contents must be downloaded.
+
     :param task: The Taskmanager object related to this action.
     :param instance_info: The instance_info field being used in
                           association with this method call.
@@ -1525,8 +1572,8 @@ def build_instance_info_for_deploy(task):
         di_info['image_source'] = image_source
         node.driver_internal_info = di_info
     if not is_glance_image:
-        if (image_source.startswith('file://')
-                or image_download_source == 'local'):
+        is_file_url = image_source.startswith('file://')
+        if (is_file_url or image_download_source == 'local'):
             # In this case, we're explicitly downloading (or copying a file)
             # hosted locally so IPA can download it directly from Ironic.
 
@@ -1534,7 +1581,14 @@ def build_instance_info_for_deploy(task):
             # based deploy source since we don't want to, nor should we be in
             # in the business of copying large numbers of files as it is a
             # huge performance impact.
-
+            if is_file_url:
+                # In this case, we need to validate the URL first before
+                # moving on to _cache_and_convert_image, because it's whole
+                # existence is to download, checksum, convert, etc.
+                image_service.FileImageService().validate_href(
+                    image_href=image_source)
+            # Either the file is local, or the file needs to be downloaded.
+            # _cache_and_convert_image handles both cases
             _cache_and_convert_image(task, instance_info)
         else:
             # This is the "all other cases" logic for aspects like the user

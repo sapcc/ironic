@@ -994,6 +994,13 @@ class BootModeNotAllowed(Invalid):
     _msg_fmt = _("'%(mode)s' boot mode is not allowed for %(op)s operation.")
 
 
+class StepNotAllowed(Invalid):
+    _msg_fmt = _("%(step_type)s step '%(step)s' is not allowed. Disallowed "
+                 "by operator configuration "
+                 "[api]disallow_%(step_type)s_steps.")
+    code = http_client.BAD_REQUEST
+
+
 class InvalidImage(ImageUnacceptable):
     _msg_fmt = _("The requested image is not valid for use.")
 
@@ -1134,3 +1141,9 @@ class ConfigDriveRegenerationFailure(IronicException):
     """Raised when we fail to handle configuration drive corrections."""
     # NOTE(TheJulia): This is not intended to get raised to a user, but more
     # so we handle known possible failure cases and don't fail horribly.
+
+
+class InvalidContent(Invalid):
+    """Invalid or malicious content has been provided to the conductor."""
+    _msg_fmt = _("Invalid or potentially malicious content has been provided "
+                 "to the conductor and the conductor will not proceed.")

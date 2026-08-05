@@ -35,6 +35,7 @@ from urllib import parse as urlparse
 import warnings
 
 import jinja2
+from jinja2 import sandbox as jinja2sandbox
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_serialization import jsonutils
@@ -244,6 +245,15 @@ def validate_and_normalize_mac(address):
     """
     if not netutils.is_valid_mac(address):
         raise exception.InvalidMAC(mac=address)
+    return normalize_mac(address)
+
+
+def normalize_mac(address):
+    """Normalize a MAC address without validating it.
+
+    :param address: MAC address to be normalized.
+    :returns: Normalized MAC address.
+    """
     return address.lower()
 
 
@@ -493,6 +503,8 @@ def render_template(template, params, is_file=True, strict=False):
     :param strict: Enable strict template rendering. Default is False
     :returns: Rendered template
     :raises: jinja2.exceptions.UndefinedError
+    :raises: jinja2.exceptions.SecurityError when the template has insecure
+             operations detected.
     """
     if is_file:
         tmpl_path, tmpl_name = os.path.split(template)
@@ -500,11 +512,9 @@ def render_template(template, params, is_file=True, strict=False):
     else:
         tmpl_name = 'template'
         loader = jinja2.DictLoader({tmpl_name: template})
-    # NOTE(pas-ha) bandit does not seem to cope with such syntaxis
-    # and still complains with B701 for that line
     # NOTE(pas-ha) not using default_for_string=False as we set the name
     # of the template above for strings too.
-    env = jinja2.Environment(  # nosec B701
+    env = jinja2sandbox.SandboxedEnvironment(
         loader=loader,
         autoescape=jinja2.select_autoescape(),
         undefined=jinja2.StrictUndefined if strict else jinja2.Undefined
@@ -1152,3 +1162,38 @@ def get_route_source(dest, ignore_link_local=True):
     except (IndexError, ValueError):
         LOG.debug('No route to host %(dest)s, route record: %(rec)s',
                   {'dest': dest, 'rec': out})
+
+
+def check_iso_path(base_folder, folder, file=None):
+    """Sanity check an ISO path, folder, and file structure.
+
+    :param base_folder: The target folder for path operations.
+    :param folder: The folder being evaluated in the ISO.
+    :param file: An optional file to also evaluate for path
+                 transversal attempts.
+    :raises: InvalidContent when an inconsistency is detected.
+    """
+    if folder.startswith('/'):
+        # If we're here, we were handed the base folder path with a leading /.
+        # Any caller of this method should pre-emptively strip it.
+        raise exception.InvalidContent()
+
+    target_folder = os.path.join(base_folder, folder)
+    resolved_folder = os.path.realpath(target_folder)
+    if not resolved_folder.startswith(base_folder):
+        # supplied folder path has something like ../ in the data set
+        # or resolution has resulted in a change in the value.
+        # Possible risk: if the temp folder is being used with a symlink...
+        LOG.error('ISO path evaluation identified a folder based '
+                  'transversal attempt.')
+        raise exception.InvalidContent()
+    if file:
+        target_file_path = os.path.join(resolved_folder, file)
+        resolved_file_path = os.path.realpath(target_file_path)
+        # Check that the folder itself doesn't change,
+        # and then check that the resolved path matches
+        if (not target_file_path.startswith(resolved_folder)
+                or target_file_path != resolved_file_path):
+            LOG.error('ISO path evaluation identified a file name based '
+                      'transversal attempt.')
+            raise exception.InvalidContent()

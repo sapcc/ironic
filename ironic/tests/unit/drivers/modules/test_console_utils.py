@@ -313,6 +313,45 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
                                            stderr=subprocess.PIPE)
         mock_popen.return_value.poll.assert_called_once_with()
 
+    @mock.patch.object(console_utils, 'open',
+                       mock.mock_open(read_data='12345\n'))
+    @mock.patch.object(os.path, 'exists', autospec=True)
+    @mock.patch.object(subprocess, 'Popen', autospec=True)
+    @mock.patch.object(psutil, 'pid_exists', autospec=True)
+    @mock.patch.object(console_utils, '_get_console_pid_file', autospec=True)
+    @mock.patch.object(console_utils, '_ensure_console_pid_dir_exists',
+                       autospec=True)
+    @mock.patch.object(console_utils, '_stop_console', autospec=True)
+    @mock.patch.object(loopingcall.FixedIntervalLoopingCall, 'start',
+                       autospec=True)
+    def test_start_shellinabox_console_with_env_variables(
+            self, mock_timer_start, mock_stop, mock_dir_exists,
+            mock_get_pid, mock_pid_exists, mock_popen, mock_path_exists):
+        """Test start_shellinabox_console passes env_variables to Popen."""
+        mock_timer_start.return_value = mock.Mock()
+        mock_get_pid.return_value = '/tmp/%s.pid' % self.info['uuid']
+        mock_popen.return_value.poll.return_value = 0
+        mock_popen.return_value.stdout = self.mock_stdout
+        self.mock_stdout.seek(0)
+        mock_popen.return_value.stderr = self.mock_stderr
+        self.mock_stderr.seek(0)
+        mock_pid_exists.return_value = True
+        mock_path_exists.return_value = True
+
+        console_utils.start_shellinabox_console(
+            self.info['uuid'], self.info['port'], 'ls&',
+            env_variables={'SOME_VAR': 'value'})
+
+        mock_popen.assert_called_once()
+        call_kwargs = mock_popen.call_args[1]
+        self.assertIn('env', call_kwargs)
+        env = call_kwargs['env']
+        self.assertEqual(env.get('SOME_VAR'), 'value')
+        # Should be a copy of os.environ plus our var
+        for key, value in os.environ.items():
+            self.assertEqual(env.get(key), value,
+                             'env should contain os.environ')
+
     @mock.patch.object(fcntl, 'fcntl', autospec=True)
     @mock.patch.object(console_utils, 'open',
                        mock.mock_open(read_data='12345\n'))
@@ -534,13 +573,14 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
                        autospec=True)
     def _test_start_socat_console_check_arg(self, mock_timer_start,
                                             mock_stop, mock_dir_exists,
-                                            mock_get_pid, mock_popen):
+                                            mock_get_pid, mock_popen,
+                                            console_cmd='ls&'):
         mock_timer_start.return_value = mock.Mock()
         mock_get_pid.return_value = '/tmp/%s.pid' % self.info['uuid']
 
         console_utils.start_socat_console(self.info['uuid'],
                                           self.info['port'],
-                                          'ls&')
+                                          console_cmd)
 
         mock_stop.assert_called_once_with(self.info['uuid'])
         mock_dir_exists.assert_called_once_with()
@@ -548,6 +588,12 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
         mock_timer_start.assert_called_once_with(mock.ANY, interval=mock.ANY)
         mock_popen.assert_called_once_with(mock.ANY, stderr=subprocess.PIPE)
         return mock_popen.call_args[0][0]
+
+    def test_escape_start_socat_console_command(self):
+        command = ";cat /etc/passwd; && echo it\'s tricky"
+        quoted_command = ';cat /etc/passwd; && echo it\'"\'"\'s tricky'
+        args = self._test_start_socat_console_check_arg(console_cmd=command)
+        self.assertIn(quoted_command, args[-1])
 
     def test_start_socat_console_check_arg_default_timeout(self):
         args = self._test_start_socat_console_check_arg()
@@ -606,6 +652,38 @@ class ConsoleUtilsTestCase(db_base.DbTestCase):
         mock_get_pid.assert_called_with(self.info['uuid'])
         mock_path_exists.assert_called_with(mock.ANY)
         mock_popen.assert_called_once_with(mock.ANY, stderr=subprocess.PIPE)
+
+    @mock.patch.object(os.path, 'exists', autospec=True)
+    @mock.patch.object(subprocess, 'Popen', autospec=True)
+    @mock.patch.object(psutil, 'pid_exists', autospec=True)
+    @mock.patch.object(console_utils, '_get_console_pid', autospec=True)
+    @mock.patch.object(console_utils, '_ensure_console_pid_dir_exists',
+                       autospec=True)
+    @mock.patch.object(console_utils, '_stop_console', autospec=True)
+    def test_start_socat_console_with_env_variables(
+            self, mock_stop, mock_dir_exists, mock_get_pid,
+            mock_pid_exists, mock_popen, mock_path_exists):
+        """Test start_socat_console passes env_variables to Popen."""
+        mock_get_pid.return_value = 23456
+        mock_popen.return_value.pid = 23456
+        mock_popen.return_value.poll.return_value = None
+        mock_popen.return_value.communicate.return_value = (None, None)
+        mock_pid_exists.return_value = True
+        mock_path_exists.return_value = True
+
+        console_utils.start_socat_console(
+            self.info['uuid'], self.info['port'], 'ls&',
+            env_variables={'SOME_VAR': 'value'})
+
+        mock_popen.assert_called_once()
+        call_kwargs = mock_popen.call_args[1]
+        self.assertIn('env', call_kwargs)
+        env = call_kwargs['env']
+        self.assertEqual(env.get('SOME_VAR'), 'value')
+        # Should be a copy of os.environ plus our var
+        for key, value in os.environ.items():
+            self.assertEqual(env.get(key), value,
+                             'env should contain os.environ')
 
     @mock.patch.object(os.path, 'exists', autospec=True)
     @mock.patch.object(subprocess, 'Popen', autospec=True)

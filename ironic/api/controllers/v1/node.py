@@ -1329,6 +1329,14 @@ def _check_clean_steps(clean_steps):
     """
     _check_steps(clean_steps, 'clean', _STEPS_SCHEMA)
 
+    disallowed_steps = CONF.api.disallow_clean_steps
+    if disallowed_steps:
+        for step in clean_steps:
+            step_id = '%s.%s' % (step['interface'], step['step'])
+            if step_id in disallowed_steps:
+                raise exception.StepNotAllowed(step=step_id,
+                                               step_type='clean')
+
 
 def _check_deploy_steps(deploy_steps):
     """Ensure all necessary keys are present and correct in steps for deploy
@@ -1339,6 +1347,14 @@ def _check_deploy_steps(deploy_steps):
     """
     _check_steps(deploy_steps, 'deploy', _DEPLOY_STEPS_SCHEMA)
 
+    disallowed_steps = CONF.api.disallow_deploy_steps
+    if disallowed_steps:
+        for step in deploy_steps:
+            step_id = '%s.%s' % (step['interface'], step['step'])
+            if step_id in disallowed_steps:
+                raise exception.StepNotAllowed(step=step_id,
+                                               step_type='deploy')
+
 
 def _check_service_steps(service_steps):
     """Ensure all necessary keys are present and correct in steps for service
@@ -1348,6 +1364,14 @@ def _check_service_steps(service_steps):
     :raises: InvalidParameterValue if validation of steps fails.
     """
     _check_steps(service_steps, 'service', _STEPS_SCHEMA)
+
+    disallowed_steps = CONF.api.disallow_service_steps
+    if disallowed_steps:
+        for step in service_steps:
+            step_id = '%s.%s' % (step['interface'], step['step'])
+            if step_id in disallowed_steps:
+                raise exception.StepNotAllowed(step=step_id,
+                                               step_type='service')
 
 
 def _check_steps(steps, step_type, schema):
@@ -2966,11 +2990,9 @@ class NodesController(rest.RestController):
         chassis = _replace_chassis_uuid_with_id(node)
         chassis_uuid = chassis and chassis.uuid or None
 
-        if ('parent_node' in node
-            and not uuidutils.is_uuid_like(node['parent_node'])):
-
-            parent_node = api_utils.check_node_policy_and_retrieve(
-                'baremetal:node:get', node['parent_node'])
+        if node.get('parent_node'):
+            parent_node = api_utils.authorize_node_link(
+                node, node['parent_node'], 'parent_node')
             node['parent_node'] = parent_node.uuid
 
         new_node = objects.Node(context, **node)
@@ -3036,20 +3058,6 @@ class NodesController(rest.RestController):
 
         for network_data in network_data_fields:
             validate_network_data(network_data)
-        parent_node = api_utils.get_patch_values(patch, '/parent_node')
-        if parent_node:
-            # At this point, if there *is* a parent_node, there is a value
-            # in the patch value list.
-            try:
-                # Verify we can see the parent node
-                req_parent_node = api_utils.check_node_policy_and_retrieve(
-                    'baremetal:node:get', parent_node[0])
-                # If we can't see the node, an exception gets raised.
-            except Exception:
-                msg = _("Unable to apply the requested parent_node. "
-                        "Requested value was invalid.")
-                raise exception.Invalid(msg)
-            corrected_values['parent_node'] = req_parent_node.uuid
         return corrected_values
 
     def _authorize_patch_and_get_node(self, node_ident, patch):
@@ -3137,6 +3145,14 @@ class NodesController(rest.RestController):
 
         context = api.request.context
         rpc_node = self._authorize_patch_and_get_node(node_ident, patch)
+        if parent_node := api_utils.authorize_node_link_patch(
+                rpc_node, patch, 'parent_node'):
+            # parent_node would be set to the UUID to verify that the request
+            # is authorized against the returned parent_node.uuid, and is then
+            # set as the authorized to node. IFF there is a mismatch, then
+            # we need to force override the parent node to the result.
+            if parent_node.uuid != rpc_node.uuid:
+                corrected_values['parent_node'] = parent_node.uuid
 
         remove_inst_uuid_patch = [{'op': 'remove', 'path': '/instance_uuid'}]
         if rpc_node.maintenance and patch == remove_inst_uuid_patch:

@@ -538,8 +538,10 @@ class RedfishManagement(base.ManagementInterface):
 
     @base.clean_step(priority=0, abortable=False, argsinfo={
         'target_datetime': {
-            'description': 'The datetime to set in ISO8601 format',
-            'required': True
+            'description': ('The datetime to set in ISO8601 format. If '
+                            'omitted, the current conductor UTC time is '
+                            'used.'),
+            'required': False
         },
         'datetime_local_offset': {
             'description': 'The local time offset from UTC',
@@ -547,17 +549,27 @@ class RedfishManagement(base.ManagementInterface):
         }
     })
     @task_manager.require_exclusive_lock
-    def set_bmc_clock(self, task, target_datetime, datetime_local_offset=None):
+    def set_bmc_clock(self, task, target_datetime=None,
+                      datetime_local_offset=None):
         """Set the BMC clock using Redfish Manager resource.
 
         :param task: a TaskManager instance containing the node to act on.
-        :param target_datetime: The datetime to set in ISO8601 format
+        :param target_datetime: The datetime to set in ISO8601 format.
+                                Defaults to the current conductor UTC time.
         :param datetime_local_offset: The local time offset from UTC (optional)
         :raises: RedfishError if the operation fails
         """
         try:
             system = redfish_utils.get_system(task.node)
             manager = redfish_utils.get_manager(task.node, system)
+            if target_datetime is None:
+                target_datetime = timeutils.utcnow().replace(
+                    tzinfo=timezone.utc).isoformat()
+            # if the Redfish manager interface does not have microseconds,
+            # we cannot send microseconds in our update so strip them out
+            if not parser.isoparse(manager.datetime).microsecond:
+                target_datetime = parser.isoparse(target_datetime).replace(
+                    microsecond=0).isoformat()
             LOG.debug("Setting BMC clock to %s (offset: %s)",
                       target_datetime, datetime_local_offset)
             manager._conn.timeout = 30
@@ -594,14 +606,17 @@ class RedfishManagement(base.ManagementInterface):
             return
 
         try:
-            system_time = timeutils.utcnow().replace(
-                tzinfo=timezone.utc).isoformat()
+            local_time = timeutils.utcnow().replace(tzinfo=timezone.utc)
             system = redfish_utils.get_system(task.node)
             manager = redfish_utils.get_manager(task.node, system)
             manager.refresh()
 
             manager_time = parser.isoparse(manager.datetime)
-            local_time = parser.isoparse(system_time)
+            # if the Redfish manager interface does not have microseconds,
+            # we cannot send microseconds in our update so strip them out
+            if not manager_time.microsecond:
+                local_time = local_time.replace(microsecond=0)
+            system_time = local_time.isoformat()
 
             LOG.debug("BMC time: %s, Local time: %s",
                       manager_time, local_time)
@@ -612,8 +627,11 @@ class RedfishManagement(base.ManagementInterface):
             # by more than 1 second
             if abs((manager_time - local_time).total_seconds()) > 1:
                 LOG.info("BMC clock is out of sync. Updating...")
+                offset = "+00:00"
+                if manager.datetimelocaloffset == offset:
+                    offset = None
                 manager.set_datetime(system_time,
-                                     datetime_local_offset="+00:00")
+                                     datetime_local_offset=offset)
                 manager.refresh()
 
                 updated_time = parser.isoparse(manager.datetime)
@@ -1124,8 +1142,12 @@ class RedfishManagement(base.ManagementInterface):
 
             LOG.info('Firmware updates completed for node %(node)s',
                      {'node': node.uuid})
-
-            manager_utils.notify_conductor_resume_clean(task)
+            if task.node.clean_step:
+                manager_utils.notify_conductor_resume_clean(task)
+            elif task.node.service_step:
+                manager_utils.notify_conductor_resume_service(task)
+            elif task.node.deploy_step:
+                manager_utils.notify_conductor_resume_deploy(task)
         else:
             firmware_updates.pop(0)
             self._apply_firmware_update(node,
@@ -1153,7 +1175,10 @@ class RedfishManagement(base.ManagementInterface):
     @periodics.node_periodic(
         purpose='checking if async firmware update failed',
         spacing=CONF.redfish.firmware_update_fail_interval,
-        filters={'reserved': False, 'provision_state': states.CLEANFAIL,
+        filters={'reserved': False,
+                 'provision_state_in': {states.CLEANFAIL,
+                                        states.SERVICEFAIL,
+                                        states.DEPLOYFAIL},
                  'maintenance': True},
         predicate_extra_fields=['driver_internal_info'],
         predicate=lambda n: n.driver_internal_info.get('firmware_updates'),
@@ -1175,7 +1200,10 @@ class RedfishManagement(base.ManagementInterface):
     @periodics.node_periodic(
         purpose='checking async firmware update tasks',
         spacing=CONF.redfish.firmware_update_status_interval,
-        filters={'reserved': False, 'provision_state': states.CLEANWAIT},
+        filters={'reserved': False,
+                 'provision_state_in': {states.CLEANWAIT,
+                                        states.SERVICEWAIT,
+                                        states.DEPLOYWAIT}},
         predicate_extra_fields=['driver_internal_info'],
         predicate=lambda n: n.driver_internal_info.get('firmware_updates'),
     )
