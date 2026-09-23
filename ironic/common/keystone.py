@@ -127,7 +127,7 @@ def get_service_url(session, **kwargs):
         return session.get_endpoint(**kwargs)
     try:
         return session.get_endpoint(interface='internal', **kwargs)
-    except kaexception.EndpointNotFound:
+    except ks_exceptions.EndpointNotFound:
         return session.get_endpoint(interface='public', **kwargs)
 
 
