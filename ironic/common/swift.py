@@ -51,7 +51,7 @@ class SwiftAPI(object):
         container_project_id = session_args.pop('container_project_id', None)
         session = get_swift_session(**session_args)
         preauthurl = keystone.get_service_url(session,
-                                              service_type='object-store')
+                                              service_type=CONF.swift.service_type)
         session_project_id = session.get_project_id()
 
         if container_project_id and preauthurl.endswith(session_project_id):
