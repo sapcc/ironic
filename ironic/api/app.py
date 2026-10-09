@@ -17,7 +17,6 @@
 
 
 import keystonemiddleware.audit as audit_middleware
-from ironic_lib import auth_basic
 from keystonemiddleware import auth_token
 # Try using custom ccloud auditmiddleware
 try:
