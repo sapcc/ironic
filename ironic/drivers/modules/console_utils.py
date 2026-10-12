@@ -32,7 +32,6 @@ import time
 
 from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta
-from ironic_lib import utils as ironic_utils
 from oslo_concurrency import lockutils
 from oslo_log import log as logging
 from oslo_service import loopingcall
