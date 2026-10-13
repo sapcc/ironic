@@ -1948,7 +1948,7 @@ class Connection(api.Connection):
             if not supported_versions:
                 continue
 
-            if permit_initial_version and supported_versions == {'1.0'}:
+            if permit_initial_version and '1.0' in supported_versions:
                 # We're getting called from someplace it is okay to handle
                 # a missing table, i.e. database upgrades which will create
                 # the table *and* the field version is 1.0, which means we
