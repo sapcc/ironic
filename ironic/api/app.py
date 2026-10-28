@@ -43,6 +43,10 @@ from ironic.conf import CONF
 watcher_errors = importutils.try_import('watcher.errors')
 watcher_middleware = importutils.try_import('watcher.watcher')
 
+# sapcc/openstack-rate-limit-middleware
+rate_limit_middleware = importutils.try_import('rate_limit.rate_limit')
+rate_limit_errors = importutils.try_import('rate_limit.errors')
+
 
 class IronicCORS(cors_middleware.CORS):
     """Ironic-specific CORS class
@@ -159,6 +163,30 @@ def setup_app(pecan_config=None, extra_hooks=None):
         expose_headers=[base.Version.max_string, base.Version.min_string,
                         base.Version.string]
     )
+
+    # sapcc/openstack-rate-limit-middleware
+    if rate_limit_errors and rate_limit_middleware and CONF.rate_limit.enabled:
+        try:
+            app = rate_limit_middleware.OpenStackRateLimitMiddleware(
+                app,
+                config_file=CONF.rate_limit.config_file,
+                clock_accuracy=CONF.rate_limit.clock_accuracy,
+                service_type=CONF.rate_limit.service_type,
+                rate_limit_by=CONF.rate_limit.rate_limit_by,
+                max_sleep_time_seconds=CONF.rate_limit.max_sleep_time_seconds,
+                log_sleep_time_seconds=CONF.rate_limit.log_sleep_time_seconds,
+                backend_host=CONF.rate_limit.backend_host,
+                backend_port=CONF.rate_limit.backend_port,
+                backend_secret_file=CONF.rate_limit.backend_secret_file,
+                backend_max_connections=CONF.rate_limit.backend_max_connections,
+                backend_timeout_seconds=CONF.rate_limit.backend_timeout_seconds
+            )
+        except (EnvironmentError, OSError,
+                rate_limit_errors.ConfigError) as e:
+            raise exceptions.InputFileError(
+                file_name=CONF.rate_limit.config_file,
+                reason=e
+            )
 
     app = json_ext.JsonExtensionMiddleware(app)
 
