@@ -21,6 +21,7 @@ from oslo_config import cfg
 from oslo_log import log
 from pecan import hooks
 
+from ironic.api.controllers.v1 import utils as api_utils
 from ironic.common import context
 from ironic.common import policy
 from ironic.conductor import rpcapi
@@ -181,6 +182,22 @@ class NoExceptionTracebackHook(hooks.PecanHook):
             # Replace the whole json. Cannot change original one because it's
             # generated on the fly.
             state.response.json = json_body
+
+
+class AuditNodeIdentsHook(hooks.PecanHook):
+    """[ccloud] Hide name lookups of refused requests from the audit events.
+
+    get_rpc_node records {name: uuid} for nodes addressed by name, so the
+    audit middleware can report the node UUID. Nodes the caller may not see
+    are concealed with a 404, so the audit event of a 404 must not carry the
+    UUID; this covers every concealing code path. A 403 only reaches callers
+    who can see the node, so denied actions keep the UUID in their events.
+    """
+
+    def after(self, state):
+        if state.response.status_int == http_client.NOT_FOUND:
+            state.request.environ.pop(api_utils.NODE_IDENTS_ENVIRON_KEY,
+                                      None)
 
 
 class PublicUrlHook(hooks.PecanHook):
