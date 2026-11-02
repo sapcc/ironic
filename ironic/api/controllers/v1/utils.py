@@ -499,6 +499,11 @@ def _get_with_suffix(get_func, ident, exc_class):
         return get_func(ident + '.json')
 
 
+# [ccloud] WSGI environ key holding {node name: node UUID} for nodes looked
+# up by name; read by the audit middleware (id_environ_key in its mapping)
+NODE_IDENTS_ENVIRON_KEY = 'ironic.node_idents'
+
+
 def get_rpc_node(node_ident):
     """Get the RPC node from the node uuid or logical name.
 
@@ -516,7 +521,12 @@ def get_rpc_node(node_ident):
     # We can refer to nodes by their name, if the client supports it
     if allow_node_logical_names():
         if is_valid_logical_name(node_ident):
-            return objects.Node.get_by_name(api.request.context, node_ident)
+            node = objects.Node.get_by_name(api.request.context, node_ident)
+            # [ccloud] let the audit middleware report the node UUID for
+            # requests that address the node by name
+            api.request.environ.setdefault(
+                NODE_IDENTS_ENVIRON_KEY, {})[node_ident] = node.uuid
+            return node
         raise exception.InvalidUuidOrName(name=node_ident)
 
     # Ensure we raise the same exception as we did for the Juno release
