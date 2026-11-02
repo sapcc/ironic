@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Roll out new IPA images to all baremetal nodes in available/manageable state.
+"""Roll out new IPA images to all baremetal nodes in available/manageable/maintenance state.
 
 Usage: NEW_KERNEL=<uuid> NEW_RAMDISK=<uuid> NEW_BOOTLOADER=<url> python3 rollout-ipa.py
 Optional: DRY_RUN=true, LIMIT=N
@@ -35,7 +35,7 @@ if dry_run:
     LOG.info("(dry run)")
 
 result = subprocess.run(["openstack", "baremetal", "node", "list",
-              "--fields", "uuid", "name", "provision_state", "driver_info",
+              "--fields", "uuid", "name", "provision_state", "maintenance", "driver_info",
               "-f", "json"], capture_output=True, text=True, check=True)
 nodes = json.loads(result.stdout)
 
@@ -43,8 +43,9 @@ eligible, busy = [], []
 for n in nodes:
     name = n.get("Name") or n.get("UUID", "")
     state = n.get("Provisioning State") or n.get("provision_state", "")
+    maint = n.get("Maintenance") or n.get("maintenance", False)
     di = n.get("Driver Info") or n.get("driver_info") or {}
-    if state not in SAFE_STATES:
+    if state not in SAFE_STATES and not maint:
         busy.append((name, state))
     elif di.get("deploy_kernel") != new_kernel or di.get("deploy_ramdisk") != new_ramdisk:
         eligible.append(name)
