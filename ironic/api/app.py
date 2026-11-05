@@ -74,7 +74,8 @@ def setup_app(pecan_config=None, extra_hooks=None):
                  hooks.ContextHook(pecan_config.app.acl_public_routes),
                  hooks.RPCHook(),
                  hooks.NoExceptionTracebackHook(),
-                 hooks.PublicUrlHook()]
+                 hooks.PublicUrlHook(),
+                 hooks.AuditNodeIdentsHook()]
     if extra_hooks:
         app_hooks.extend(extra_hooks)
 

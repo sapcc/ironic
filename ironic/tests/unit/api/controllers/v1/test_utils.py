@@ -805,7 +805,8 @@ class TestCheckAllowFields(base.TestCase):
                           states.MANAGEABLE, {'a': 1})
 
 
-@mock.patch.object(api, 'request', spec_set=['context', 'version'])
+@mock.patch.object(api, 'request',
+                   spec_set=['context', 'version', 'environ'])
 class TestNodeIdent(base.TestCase):
 
     def setUp(self):
@@ -847,12 +848,42 @@ class TestNodeIdent(base.TestCase):
     def test_get_rpc_node_expect_name(self, mock_gbn, mock_gbu, mock_anln,
                                       mock_pr):
         mock_pr.version.minor = 10
+        mock_pr.environ = {}
         mock_anln.return_value = True
-        self.node['name'] = self.valid_name
-        mock_gbn.return_value = self.node
-        self.assertEqual(self.node, utils.get_rpc_node(self.valid_name))
+        node = obj_utils.get_test_node(self.context, name=self.valid_name)
+        mock_gbn.return_value = node
+        self.assertEqual(node, utils.get_rpc_node(self.valid_name))
         self.assertEqual(0, mock_gbu.call_count)
         self.assertEqual(1, mock_gbn.call_count)
+        self.assertEqual({self.valid_name: node.uuid},
+                         mock_pr.environ[utils.NODE_IDENTS_ENVIRON_KEY])
+
+    @mock.patch.object(utils, 'allow_node_logical_names', autospec=True)
+    @mock.patch.object(objects.Node, 'get_by_uuid', autospec=True)
+    @mock.patch.object(objects.Node, 'get_by_name', autospec=True)
+    def test_get_rpc_node_by_name_keeps_other_idents(self, mock_gbn,
+                                                     mock_gbu, mock_anln,
+                                                     mock_pr):
+        mock_pr.version.minor = 10
+        mock_pr.environ = {utils.NODE_IDENTS_ENVIRON_KEY: {'other': 'x'}}
+        mock_anln.return_value = True
+        node = obj_utils.get_test_node(self.context, name=self.valid_name)
+        mock_gbn.return_value = node
+        utils.get_rpc_node(self.valid_name)
+        self.assertEqual({'other': 'x', self.valid_name: node.uuid},
+                         mock_pr.environ[utils.NODE_IDENTS_ENVIRON_KEY])
+
+    @mock.patch.object(utils, 'allow_node_logical_names', autospec=True)
+    @mock.patch.object(objects.Node, 'get_by_uuid', autospec=True)
+    @mock.patch.object(objects.Node, 'get_by_name', autospec=True)
+    def test_get_rpc_node_by_uuid_no_idents(self, mock_gbn, mock_gbu,
+                                            mock_anln, mock_pr):
+        mock_pr.environ = {}
+        mock_anln.return_value = True
+        self.node['uuid'] = self.valid_uuid
+        mock_gbu.return_value = self.node
+        utils.get_rpc_node(self.valid_uuid)
+        self.assertNotIn(utils.NODE_IDENTS_ENVIRON_KEY, mock_pr.environ)
 
     @mock.patch.object(utils, 'allow_node_logical_names', autospec=True)
     @mock.patch.object(objects.Node, 'get_by_uuid', autospec=True)
@@ -1227,6 +1258,10 @@ class TestCheckNodePolicyAndRetrieve(base.TestCase):
             'fake-policy',
             self.valid_node_uuid
         )
+
+    def test_node_idents_environ_key(self):
+        # the helm-charts ironic audit map refers to this key
+        self.assertEqual('ironic.node_idents', utils.NODE_IDENTS_ENVIRON_KEY)
 
 
 class TestCheckAllocationPolicyAndRetrieve(base.TestCase):
