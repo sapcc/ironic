@@ -20,8 +20,11 @@ from keystonemiddleware import auth_token
 # Try using custom ccloud auditmiddleware
 try:
     import auditmiddleware as audit_middleware
+    # its config errors live in private submodules and vary by version
+    _AUDIT_CONFIG_ERRORS = (Exception,)
 except ImportError:
     import keystonemiddleware.audit as audit_middleware
+    _AUDIT_CONFIG_ERRORS = (audit_middleware.PycadfAuditApiConfigError,)
 from oslo_config import cfg
 from oslo_utils import importutils
 import oslo_middleware.cors as cors_middleware
@@ -99,10 +102,11 @@ def setup_app(pecan_config=None, extra_hooks=None):
             app = audit_middleware.AuditMiddleware(
                 app,
                 audit_map_file=CONF.audit.audit_map_file,
-                ignore_req_list=CONF.audit.ignore_req_list
+                ignore_req_list=CONF.audit.ignore_req_list,
+                record_payloads=CONF.audit.record_payloads,
+                metrics_enabled=CONF.audit.metrics_enabled
             )
-        except (EnvironmentError, OSError,
-                audit_middleware.PycadfAuditApiConfigError) as e:
+        except (EnvironmentError, OSError) + _AUDIT_CONFIG_ERRORS as e:
             raise exception.InputFileError(
                 file_name=CONF.audit.audit_map_file,
                 reason=e

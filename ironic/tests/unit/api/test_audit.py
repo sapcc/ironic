@@ -15,9 +15,9 @@ Tests to assert that audit middleware works as expected.
 
 from unittest import mock
 
-from keystonemiddleware import audit
 from oslo_config import cfg
 
+from ironic.api import app
 from ironic.common import exception
 from ironic.tests.unit.api import base
 
@@ -33,23 +33,55 @@ class TestAuditMiddleware(base.BaseApiTest):
     the test suite in keystone audit_middleware.
     """
 
-    @mock.patch.object(audit, 'AuditMiddleware', autospec=True)
+    @mock.patch.object(app.audit_middleware, 'AuditMiddleware',
+                       autospec=True)
     def test_enable_audit_request(self, mock_audit):
         CONF.set_override('enabled', True, 'audit')
         self._make_app()
         mock_audit.assert_called_once_with(
             mock.ANY,
             audit_map_file=CONF.audit.audit_map_file,
-            ignore_req_list=CONF.audit.ignore_req_list)
+            ignore_req_list=CONF.audit.ignore_req_list,
+            record_payloads=False,
+            metrics_enabled=False)
 
-    @mock.patch.object(audit, 'AuditMiddleware', autospec=True)
+    @mock.patch.object(app.audit_middleware, 'AuditMiddleware',
+                       autospec=True)
+    def test_enable_audit_request_payloads_only(self, mock_audit):
+        CONF.set_override('enabled', True, 'audit')
+        CONF.set_override('record_payloads', True, 'audit')
+        CONF.set_override('metrics_enabled', False, 'audit')
+        self._make_app()
+        mock_audit.assert_called_once_with(
+            mock.ANY,
+            audit_map_file=CONF.audit.audit_map_file,
+            ignore_req_list=CONF.audit.ignore_req_list,
+            record_payloads=True,
+            metrics_enabled=False)
+
+    @mock.patch.object(app.audit_middleware, 'AuditMiddleware',
+                       autospec=True)
     def test_enable_audit_request_error(self, mock_audit):
         CONF.set_override('enabled', True, 'audit')
         mock_audit.side_effect = IOError("file access error")
         self.assertRaises(exception.InputFileError,
                           self._make_app)
 
-    @mock.patch.object(audit, 'AuditMiddleware', autospec=True)
+    @mock.patch.object(app.audit_middleware, 'AuditMiddleware',
+                       autospec=True)
+    def test_enable_audit_request_config_error(self, mock_audit):
+        CONF.set_override('enabled', True, 'audit')
+        if app.audit_middleware.__name__ == 'auditmiddleware':
+            # ccloud middleware raises config errors from private modules
+            mock_audit.side_effect = ValueError("bad map")
+        else:
+            mock_audit.side_effect = (
+                app.audit_middleware.PycadfAuditApiConfigError("bad map"))
+        self.assertRaises(exception.InputFileError,
+                          self._make_app)
+
+    @mock.patch.object(app.audit_middleware, 'AuditMiddleware',
+                       autospec=True)
     def test_disable_audit_request(self, mock_audit):
         CONF.set_override('enabled', False, 'audit')
         self._make_app()
