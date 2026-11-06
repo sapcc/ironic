@@ -17,9 +17,13 @@
 import collections
 import datetime
 import functools
+import hashlib
+import hmac
 import json
 import logging
+import math
 import threading
+import time
 
 from oslo_concurrency import lockutils
 from oslo_db import api as oslo_db_api
@@ -111,6 +115,396 @@ def wrap_sqlite_retry(f):
 def get_backend():
     """The backend is this module itself."""
     return Connection()
+
+
+AGENT_CHANNEL_SESSION_ACTIVE = 'active'
+AGENT_CHANNEL_SESSION_DRAINING = 'draining'
+AGENT_CHANNEL_SESSION_CLOSING = 'closing'
+AGENT_CHANNEL_SESSION_CLOSED = 'closed'
+AGENT_CHANNEL_COMMAND_QUEUED = 'queued'
+AGENT_CHANNEL_COMMAND_CONSUMED = 'consumed'
+AGENT_CHANNEL_REPORT_KINDS = ('receipt', 'acceptance', 'result')
+# The wire protocol reports are an independent bounded list. The journal
+# guards its own bound so a single oversized batch cannot exhaust the
+# report transaction.
+AGENT_CHANNEL_REPORT_MAX_ENTRIES = 200
+
+# Work poll outcomes of the wire protocol. A poll carries exactly one
+# outcome: a command envelope, no work, a channel that is not ready for
+# the poller, or a closed session.
+AGENT_CHANNEL_OUTCOME_COMMAND = 'command'
+AGENT_CHANNEL_OUTCOME_NO_WORK = 'no_work'
+AGENT_CHANNEL_OUTCOME_NOT_READY = 'not_ready'
+AGENT_CHANNEL_OUTCOME_CLOSED = 'closed'
+
+# Reply outcomes of the consumption contract. Consumption is the caller
+# side of the rendezvous: it returns the stored reply or states that no
+# reply was committed in time.
+AGENT_CHANNEL_OUTCOME_REPLY = 'reply'
+AGENT_CHANNEL_OUTCOME_NO_REPLY = 'no_reply'
+
+AGENT_CHANNEL_ACK_ACKNOWLEDGED = 'acknowledged'
+AGENT_CHANNEL_ACK_DUPLICATE = 'duplicate'
+AGENT_CHANNEL_ACK_CONFLICT = 'conflict'
+AGENT_CHANNEL_ACK_WRONG_EPOCH = 'wrong_epoch'
+AGENT_CHANNEL_ACK_UNKNOWN_COMMAND = 'unknown_command'
+AGENT_CHANNEL_ACK_UNSUPPORTED_KIND = 'unsupported_kind'
+
+# The journal accepts only JSON values as command parameters. Keep the
+# validation and the canonical form in one place so that the stored digest
+# and the stored body cannot disagree.
+_AGENT_CHANNEL_JSON_SCALARS = (bool, int, float, str)
+
+
+def _validate_agent_channel_json(value):
+    """Reject everything that is not a JSON value.
+
+    The error message is deliberately free of the offending value: command
+    parameters may carry secrets.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise exception.InvalidParameterValue(
+                    _('Agent channel command parameters must be a JSON '
+                      'object with string keys and JSON values.'))
+            _validate_agent_channel_json(item)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_agent_channel_json(item)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            raise exception.InvalidParameterValue(
+                _('Agent channel command parameters must not contain NaN '
+                  'or infinite numbers.'))
+    elif value is not None and not isinstance(
+            value, _AGENT_CHANNEL_JSON_SCALARS):
+        raise exception.InvalidParameterValue(
+            _('Agent channel command parameters must be a JSON object '
+              'with string keys and JSON values.'))
+
+
+def _canonical_agent_channel_json(value, message):
+    """Canonicalize one agent channel JSON object.
+
+    Every rejection raises ``message``; each caller supplies its own.
+    """
+    if not isinstance(value, dict):
+        raise exception.InvalidParameterValue(message)
+    _validate_agent_channel_json(value)
+    try:
+        return json.dumps(value, sort_keys=True, separators=(',', ':'),
+                          allow_nan=False)
+    except (TypeError, ValueError):
+        raise exception.InvalidParameterValue(message)
+
+
+def _find_agent_channel_command(session, session_uuid, workflow_epoch,
+                                invocation_key):
+    # A plain read can answer from the snapshot that this transaction took
+    # before it waited for the head lock. Read the command row for update so
+    # the duplicate lookup sees the latest committed identity. Refresh an
+    # already loaded instance, so the replay body is current too.
+    return (session.query(models.AgentChannelCommand)
+            .filter_by(session_uuid=session_uuid,
+                       workflow_epoch=workflow_epoch,
+                       invocation_key=invocation_key)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none())
+
+
+def _replay_agent_channel_command(ref, params_sha256, name, reply_boundary):
+    """Return the stored body of a repeated publication.
+
+    A changed name, parameter body, or reply boundary for the same command
+    identity is a conflict. The error never carries parameter values.
+    """
+    if (ref.params_sha256 != params_sha256
+            or ref.name != name
+            or ref.reply_boundary != reply_boundary):
+        raise exception.AgentChannelCommandConflict(command=ref.uuid)
+    return _agent_channel_command_dict(ref)
+
+
+def _agent_channel_command_dict(ref):
+    return {
+        'uuid': ref.uuid,
+        'session_uuid': ref.session_uuid,
+        'workflow_epoch': ref.workflow_epoch,
+        'invocation_key': ref.invocation_key,
+        'sequence': ref.sequence,
+        'name': ref.name,
+        'params': json.loads(json.dumps(ref.params)),
+        'reply_boundary': ref.reply_boundary,
+        'params_sha256': ref.params_sha256,
+        'state': ref.state,
+        'receipt': ref.receipt,
+        'acceptance': ref.acceptance,
+        'result': ref.result,
+    }
+
+
+def _ingest_agent_channel_report(session, session_uuid, entry):
+    """Store one agent channel report and return its acknowledgment.
+
+    The acknowledgment carries only the command ID, the report kind, and a
+    disposition. It never carries the payload, so a rejected report cannot
+    leak its values.
+
+    A changed payload for an already committed kind leaves the stored
+    payload untouched: the journal never acknowledges a command and then
+    discards or mutates its stored body.
+    """
+    if not isinstance(entry, dict):
+        raise exception.InvalidParameterValue(
+            _('Each agent channel report entry must be a JSON object.'))
+    command_id = entry.get('command_id')
+    workflow_epoch = entry.get('workflow_epoch')
+    kind = entry.get('kind')
+    ack = {'command_id': command_id, 'kind': kind}
+
+    if kind not in AGENT_CHANNEL_REPORT_KINDS:
+        ack['disposition'] = AGENT_CHANNEL_ACK_UNSUPPORTED_KIND
+        return ack
+
+    # Lock the stored command row before the slot check. A plain read can
+    # answer from a snapshot that this transaction took before a concurrent
+    # reporter committed, so two writers could both see an absent slot. The
+    # locking read is a current read, and populate_existing refreshes a row
+    # that an earlier query in this transaction already loaded. A missing
+    # slot stays absent as SQL NULL and as JSON null: both decode to None.
+    command = (session.query(models.AgentChannelCommand)
+               .filter_by(uuid=command_id, session_uuid=session_uuid)
+               .populate_existing()
+               .with_for_update()
+               .one_or_none())
+    if command is None:
+        ack['disposition'] = AGENT_CHANNEL_ACK_UNKNOWN_COMMAND
+        return ack
+
+    if workflow_epoch != command.workflow_epoch:
+        ack['disposition'] = AGENT_CHANNEL_ACK_WRONG_EPOCH
+        return ack
+
+    canonical = _canonical_agent_channel_json(
+        entry.get('payload'),
+        _('Agent channel report payloads must be a JSON object '
+          'with string keys and JSON values.'))
+    slot = getattr(command, kind)
+    if slot is None:
+        setattr(command, kind, json.loads(canonical))
+        ack['disposition'] = AGENT_CHANNEL_ACK_ACKNOWLEDGED
+    elif json.dumps(slot, sort_keys=True,
+                    separators=(',', ':')) == canonical:
+        ack['disposition'] = AGENT_CHANNEL_ACK_DUPLICATE
+    else:
+        ack['disposition'] = AGENT_CHANNEL_ACK_CONFLICT
+    return ack
+
+
+def _agent_channel_token_digest(agent_token):
+    if agent_token is None:
+        return None
+    return hashlib.sha256(agent_token.encode('utf-8')).hexdigest()
+
+
+def _agent_channel_node_authenticates(session, node_id, digest):
+    """True when any session of the node carries the token verifier."""
+    matched = False
+    refs = (session.query(models.AgentChannelSession)
+            .filter_by(node_id=node_id).all())
+    for ref in refs:
+        if hmac.compare_digest(digest, ref.token_verifier):
+            matched = True
+    return matched
+
+
+def _validate_agent_channel_report_entry(entry):
+    """Reject a structurally invalid report entry before any mutation."""
+    if not isinstance(entry, dict):
+        raise exception.InvalidParameterValue(
+            _('Each agent channel report entry must be a JSON object.'))
+    if not isinstance(entry.get('command_id'), str):
+        raise exception.InvalidParameterValue(
+            _('Agent channel report command IDs must be strings.'))
+    _canonical_agent_channel_json(
+        entry.get('payload'),
+        _('Agent channel report payloads must be a JSON object '
+          'with string keys and JSON values.'))
+
+
+def _ingest_agent_channel_report_bound(session, node_id, digest, entry):
+    """Store one report bound to its stored command and session.
+
+    The entry names a command UUID only. The command row carries the
+    session, the node is the route node, and the session verifier must
+    match the presented token. A command of another node or another
+    credential is not distinguishable from an unknown command.
+    """
+    command_id = entry.get('command_id')
+    kind = entry.get('kind')
+    ack = {'command_id': command_id, 'kind': kind}
+
+    if kind not in AGENT_CHANNEL_REPORT_KINDS:
+        ack['disposition'] = AGENT_CHANNEL_ACK_UNSUPPORTED_KIND
+        return ack
+
+    # Bind the entry to its stored command before any slot write. The
+    # locking read is a current read, and populate_existing refreshes a row
+    # that an earlier query in this transaction already loaded, so the
+    # command and the session it names come from the latest committed
+    # state. A plain read can answer from a snapshot that the transaction
+    # took before a concurrent reporter committed.
+    command = (session.query(models.AgentChannelCommand)
+               .filter_by(uuid=command_id)
+               .populate_existing()
+               .with_for_update()
+               .one_or_none())
+    if command is None:
+        ack['disposition'] = AGENT_CHANNEL_ACK_UNKNOWN_COMMAND
+        return ack
+
+    owner = (session.query(models.AgentChannelSession)
+             .filter_by(uuid=command.session_uuid)
+             .one_or_none())
+    if (owner is None or owner.node_id != node_id
+            or not hmac.compare_digest(digest, owner.token_verifier)):
+        ack['disposition'] = AGENT_CHANNEL_ACK_UNKNOWN_COMMAND
+        return ack
+
+    # The shared ingest owns the epoch check and the single conditional
+    # slot write, so the bound path cannot bypass the locked read or
+    # duplicate the payload write. The node, command, and session binding
+    # above stays here.
+    return _ingest_agent_channel_report(session, command.session_uuid, entry)
+
+
+def _agent_channel_session_dict(ref):
+    # NOTE: The token verifier stays in the journal. Callers never need it
+    # and it must not travel back over any API boundary.
+    return {
+        'uuid': ref.uuid,
+        'execution_id': ref.execution_id,
+        'workflow_epoch': ref.workflow_epoch,
+        'fence': ref.fence,
+        'owner_conductor_id': ref.owner_conductor_id,
+        'owner_incarnation': ref.owner_incarnation,
+        'profile': ref.profile,
+        'state': ref.state,
+    }
+
+
+def _agent_channel_node_id(session, node_uuid):
+    """The internal node ID, or NodeNotFound for an unknown UUID."""
+    node_id = session.query(models.Node.id).filter(
+        models.Node.uuid == node_uuid).scalar()
+    if node_id is None:
+        raise exception.NodeNotFound(node=node_uuid)
+    return node_id
+
+
+def _require_agent_channel_session(session, session_uuid):
+    """The session row, or NotFound for an unknown session UUID."""
+    ref = (session.query(models.AgentChannelSession)
+           .filter_by(uuid=session_uuid)
+           .one_or_none())
+    if ref is None:
+        raise exception.NotFound(
+            _('Agent channel session %s could not be found.')
+            % session_uuid)
+    return ref
+
+
+def _check_agent_channel_fence(session, node_id, session_ref,
+                               session_uuid, fence, workflow_epoch):
+    """Return the locked head, or raise for a stale fence.
+
+    The head row is locked for update so that an activation cannot change
+    the authority between this check and the caller's write. The lock stays
+    on the journal row; it is never taken on the node row. The caller gets
+    the locked head so that it can check further authority fields without a
+    second read.
+    """
+    head = (session.query(models.AgentChannelHead)
+            .filter_by(node_id=node_id)
+            .with_for_update()
+            .one_or_none())
+    if (head is None
+            or head.session_uuid != session_uuid
+            or head.fence != fence
+            or head.workflow_epoch != workflow_epoch
+            or session_ref.workflow_epoch != workflow_epoch):
+        raise exception.AgentChannelFenceConflict(
+            session=session_uuid, fence=fence)
+    return head
+
+
+def _agent_channel_envelope(ref, session):
+    """Build the wire envelope of one stored command.
+
+    The envelope is the stored command dict plus the session execution ID,
+    minus the journal-internal invocation key and parameter digest: those
+    fields never leave the journal over the wire. The terminal admission
+    slot belongs to the terminal barrier unit and is not stored yet, so it
+    does not appear here.
+    """
+    envelope = _agent_channel_command_dict(ref)
+    envelope['execution_id'] = session.execution_id
+    del envelope['invocation_key']
+    del envelope['params_sha256']
+    return envelope
+
+
+def _next_agent_channel_command(session, session_uuid):
+    """The oldest queued command of a session that is not yet received.
+
+    A stored receipt is the durable proof that the delivery was accepted. A
+    lost delivery response must stay retrievable until then, so only
+    commands without a stored receipt are delivered. The journal keeps a
+    missing report slot as JSON null, which decodes to ``None``; stored
+    report payloads are always JSON objects, so ``receipt is None`` is
+    exactly the not-yet-received state. Consumption is a later unit and
+    changes the command state, which takes the command out of this query as
+    well.
+    """
+    refs = (session.query(models.AgentChannelCommand)
+            .filter_by(session_uuid=session_uuid,
+                       state=AGENT_CHANNEL_COMMAND_QUEUED)
+            .order_by(models.AgentChannelCommand.sequence.asc())
+            .all())
+    for ref in refs:
+        if ref.receipt is None:
+            return ref
+    return None
+
+
+def _agent_channel_work_response(outcome, state, epoch, command):
+    return {
+        'outcome': outcome,
+        'state': state,
+        'epoch': epoch,
+        'command': command,
+        'retry_after': 0,
+    }
+
+
+def _agent_channel_work_not_ready():
+    """The channel is not ready for this poller; no identity is revealed."""
+    return {
+        'outcome': AGENT_CHANNEL_OUTCOME_NOT_READY,
+        'state': None,
+        'epoch': None,
+        'command': None,
+        'retry_after': 0,
+    }
+
+
+def _agent_channel_reply_response(outcome, command):
+    return {
+        'outcome': outcome,
+        'command': command,
+    }
 
 
 def _session_for_read():
@@ -3317,3 +3711,562 @@ class Connection(api.Connection):
             if count == 0:
                 raise exception.InspectionRuleNotFound(
                     rule=inspection_rule_id)
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def activate_agent_channel(self, node_uuid, execution_id, workflow_epoch,
+                               owner_conductor_id, owner_incarnation,
+                               token_verifier, profile):
+        session_uuid = uuidutils.generate_uuid()
+        with _session_for_write() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+
+            # A retried activation of the same execution process must not
+            # fence out the process that is already running.
+            existing = (session.query(models.AgentChannelSession)
+                        .filter_by(node_id=node_id,
+                                   execution_id=execution_id)
+                        .one_or_none())
+            if existing is not None:
+                return _agent_channel_session_dict(existing)
+
+            head = (session.query(models.AgentChannelHead)
+                    .filter_by(node_id=node_id)
+                    .one_or_none())
+            if head is None:
+                try:
+                    with session.begin_nested():
+                        head = models.AgentChannelHead(
+                            node_id=node_id, fence=0,
+                            workflow_epoch=workflow_epoch,
+                            owner_conductor_id=owner_conductor_id,
+                            owner_incarnation=owner_incarnation)
+                        session.add(head)
+                        session.flush()
+                except db_exc.DBDuplicateEntry:
+                    # Another conductor created the head first. Take the
+                    # existing row and let the conditional update below
+                    # decide the fence generation.
+                    head = (session.query(models.AgentChannelHead)
+                            .filter_by(node_id=node_id)
+                            .one())
+
+            # A single conditional statement allocates the next fence
+            # generation. Concurrent activations cannot read the same value
+            # and both win, because the increment happens in the database.
+            session.query(models.AgentChannelHead).filter_by(
+                id=head.id).update(
+                    {'fence': models.AgentChannelHead.fence + 1,
+                     'workflow_epoch': workflow_epoch,
+                     'session_uuid': session_uuid,
+                     'owner_conductor_id': owner_conductor_id,
+                     'owner_incarnation': owner_incarnation,
+                     'updated_at': timeutils.utcnow()},
+                    synchronize_session=False)
+            fence = session.query(models.AgentChannelHead.fence).filter_by(
+                id=head.id).scalar()
+
+            # The superseded sessions keep their journal rows; only their
+            # work authority ends.
+            session.query(models.AgentChannelSession).filter(
+                models.AgentChannelSession.node_id == node_id,
+                models.AgentChannelSession.uuid != session_uuid,
+                models.AgentChannelSession.state
+                == AGENT_CHANNEL_SESSION_ACTIVE).update(
+                    {'state': AGENT_CHANNEL_SESSION_DRAINING,
+                     'updated_at': timeutils.utcnow()},
+                    synchronize_session=False)
+
+            ref = models.AgentChannelSession(
+                uuid=session_uuid,
+                node_id=node_id,
+                execution_id=execution_id,
+                workflow_epoch=workflow_epoch,
+                fence=fence,
+                owner_conductor_id=owner_conductor_id,
+                owner_incarnation=owner_incarnation,
+                token_verifier=token_verifier,
+                profile=profile,
+                state=AGENT_CHANNEL_SESSION_ACTIVE,
+                next_sequence=0)
+            session.add(ref)
+            session.flush()
+            return _agent_channel_session_dict(ref)
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def publish_agent_command(self, session_uuid, workflow_epoch,
+                              invocation_key, name, params, reply_boundary,
+                              owner_conductor_id, owner_incarnation, fence):
+        canonical = _canonical_agent_channel_json(
+            params, _('Agent channel command parameters must be a JSON '
+                      'object with string keys and JSON values.'))
+        params_sha256 = hashlib.sha256(
+            canonical.encode('utf-8')).hexdigest()
+        # Store a normalized copy so that a caller mutating its input cannot
+        # change the frozen body or its digest.
+        stored_params = json.loads(canonical)
+
+        with _session_for_write() as session:
+            ref = _require_agent_channel_session(session, session_uuid)
+
+            head = _check_agent_channel_fence(
+                session, ref.node_id, ref, session_uuid, fence,
+                workflow_epoch)
+            if (head.owner_conductor_id != owner_conductor_id
+                    or head.owner_incarnation != owner_incarnation):
+                raise exception.AgentChannelFenceConflict(
+                    session=session_uuid, fence=fence)
+
+            # The session row was read before the head lock. Read it again
+            # under a row lock, so the allocator cannot answer from the
+            # snapshot that this transaction took while it waited. The lock
+            # order stays head, then session, then command, as activate does.
+            ref = (session.query(models.AgentChannelSession)
+                   .filter_by(uuid=session_uuid)
+                   .populate_existing()
+                   .with_for_update()
+                   .one())
+
+            existing = _find_agent_channel_command(
+                session, session_uuid, workflow_epoch, invocation_key)
+            if existing is not None:
+                return _replay_agent_channel_command(
+                    existing, params_sha256, name, reply_boundary)
+
+            # The locked allocator gives one consecutive sequence. A
+            # repeated identity returns above and allocates nothing.
+            sequence = ref.next_sequence + 1
+            session.query(models.AgentChannelSession).filter_by(
+                uuid=session_uuid).update(
+                    {'next_sequence': sequence,
+                     'updated_at': timeutils.utcnow()},
+                    synchronize_session=False)
+
+            command = models.AgentChannelCommand(
+                uuid=uuidutils.generate_uuid(),
+                session_uuid=session_uuid,
+                workflow_epoch=workflow_epoch,
+                invocation_key=invocation_key,
+                sequence=sequence,
+                name=name,
+                params=stored_params,
+                reply_boundary=reply_boundary,
+                params_sha256=params_sha256,
+                state=AGENT_CHANNEL_COMMAND_QUEUED)
+            try:
+                with session.begin_nested():
+                    session.add(command)
+                    session.flush()
+            except db_exc.DBDuplicateEntry:
+                # A concurrent publisher won the identity constraint between
+                # our lookup and our insert. The stored body is authoritative.
+                existing = _find_agent_channel_command(
+                    session, session_uuid, workflow_epoch, invocation_key)
+                if existing is None:
+                    raise
+                return _replay_agent_channel_command(
+                    existing, params_sha256, name, reply_boundary)
+            return _agent_channel_command_dict(command)
+
+    def get_agent_channel_command(self, command_uuid):
+        with _session_for_read() as session:
+            ref = (session.query(models.AgentChannelCommand)
+                   .filter_by(uuid=command_uuid)
+                   .one_or_none())
+            if ref is None:
+                raise exception.NotFound(
+                    _('Agent channel command %s could not be found.')
+                    % command_uuid)
+            return _agent_channel_command_dict(ref)
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def report_agent_channel(self, session_uuid, reports):
+        """Ingest a bounded list of agent reports into the journal.
+
+        Each report entry is a dict with ``command_id``, ``workflow_epoch``,
+        ``kind``, and ``payload``. The payload must be a JSON object, the
+        same shape the journal requires for command parameters. The journal
+        stores the payload in the command's report slot of that kind and
+        returns one acknowledgment dict per entry.
+
+        Ingestion is the reply path: it makes no Node update and no workflow
+        advance. A late report for a stored command of a superseded session
+        is still acknowledged; the command row carries its session, so no
+        session-state check gates the acknowledgment.
+        """
+        if not isinstance(reports, list):
+            raise exception.InvalidParameterValue(
+                _('Agent channel reports must be a bounded list.'))
+        if len(reports) > AGENT_CHANNEL_REPORT_MAX_ENTRIES:
+            raise exception.InvalidParameterValue(
+                _('Agent channel report list exceeds the allowed bound of '
+                  '%d entries.') % AGENT_CHANNEL_REPORT_MAX_ENTRIES)
+
+        acks = []
+        with _session_for_write() as session:
+            _require_agent_channel_session(session, session_uuid)
+
+            for entry in reports:
+                acks.append(_ingest_agent_channel_report(session,
+                                                         session_uuid,
+                                                         entry))
+        return acks
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def report_agent_channel_batch(self, node_uuid, agent_token, reports):
+        """Ingest reports bound to their stored commands and sessions.
+
+        The reports route names only the node. The token authenticates the
+        node credential for an empty or unknown batch; for a known command
+        the stored command's session must also authenticate the same token.
+        Each entry must be a JSON object with a string command ID and a
+        JSON object payload. All entries are validated before command lookup
+        or the first mutation. The whole batch commits or rolls back in one
+        transaction.
+        """
+        if not isinstance(reports, list):
+            raise exception.InvalidParameterValue(
+                _('Agent channel reports must be a bounded list.'))
+        if len(reports) > AGENT_CHANNEL_REPORT_MAX_ENTRIES:
+            raise exception.InvalidParameterValue(
+                _('Agent channel report list exceeds the allowed bound of '
+                  '%d entries.') % AGENT_CHANNEL_REPORT_MAX_ENTRIES)
+
+        digest = _agent_channel_token_digest(agent_token)
+        if digest is None:
+            raise exception.AgentChannelUnauthorized()
+
+        acks = []
+        with _session_for_write() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+            if not _agent_channel_node_authenticates(session, node_id,
+                                                     digest):
+                raise exception.AgentChannelUnauthorized()
+            for entry in reports:
+                _validate_agent_channel_report_entry(entry)
+            for entry in reports:
+                acks.append(_ingest_agent_channel_report_bound(
+                    session, node_id, digest, entry))
+        return acks
+
+    def poll_agent_channel_work(self, node_uuid, session_uuid, execution_id,
+                                workflow_epoch):
+        """Resolve one agent work poll against the journal. Read-only.
+
+        The poll answers the wire ``work`` request at the journal boundary:
+        it returns the session execution epoch, the session state, and
+        exactly one outcome (``command``, ``no_work``, ``not_ready``, or
+        ``closed``). A ``command`` outcome carries the wire envelope of the
+        oldest queued command of the session that has no stored receipt; a
+        lost delivery stays retrievable until the receipt is durable.
+
+        The poll is the delivery side only. It never consumes a command,
+        never advances the workflow epoch, never mutates the head or the
+        session, and never touches the Node row. Fencing rules: a poll
+        whose session is superseded reads state ``draining`` and gets
+        ``no_work``; a stale workflow epoch gets ``no_work`` with the
+        current epoch; an unknown session, a session of another node, a
+        mismatched execution identity, and a node without a channel get
+        ``not_ready`` without revealing any journal identity.
+
+        :param node_uuid: UUID of the node whose channel is polled.
+        :param session_uuid: UUID of the polling session.
+        :param execution_id: Stable UUID of one agent execution process.
+        :param workflow_epoch: Workflow epoch the poller believes is current.
+        :returns: A poll result dict with the keys ``outcome``, ``state``,
+                  ``epoch``, ``command``, and ``retry_after``.
+        :raises: NodeNotFound if the node does not exist.
+        """
+        with _session_for_read() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+
+            head = (session.query(models.AgentChannelHead)
+                    .filter_by(node_id=node_id)
+                    .one_or_none())
+            if head is None:
+                return _agent_channel_work_not_ready()
+
+            ref = (session.query(models.AgentChannelSession)
+                   .filter_by(uuid=session_uuid)
+                   .one_or_none())
+            if (ref is None or ref.node_id != node_id
+                    or ref.execution_id != execution_id):
+                return _agent_channel_work_not_ready()
+
+            epoch = head.workflow_epoch
+            if ref.state == AGENT_CHANNEL_SESSION_CLOSED:
+                return _agent_channel_work_response(
+                    AGENT_CHANNEL_OUTCOME_CLOSED, ref.state, epoch, None)
+
+            current = (head.session_uuid == session_uuid
+                       and head.fence == ref.fence
+                       and head.workflow_epoch == ref.workflow_epoch)
+            if not current:
+                # A superseded session reads state draining; its poll is
+                # answered but carries no new work and no consume.
+                return _agent_channel_work_response(
+                    AGENT_CHANNEL_OUTCOME_NO_WORK,
+                    AGENT_CHANNEL_SESSION_DRAINING, epoch, None)
+
+            if ref.state in (AGENT_CHANNEL_SESSION_DRAINING,
+                             AGENT_CHANNEL_SESSION_CLOSING):
+                return _agent_channel_work_response(
+                    AGENT_CHANNEL_OUTCOME_NO_WORK, ref.state, epoch, None)
+
+            if ref.workflow_epoch != workflow_epoch:
+                # A stale poller gets no work; the response carries the
+                # current epoch so it can resynchronize.
+                return _agent_channel_work_response(
+                    AGENT_CHANNEL_OUTCOME_NO_WORK, ref.state, epoch, None)
+
+            command = _next_agent_channel_command(session, session_uuid)
+            if command is None:
+                return _agent_channel_work_response(
+                    AGENT_CHANNEL_OUTCOME_NO_WORK, ref.state, epoch, None)
+            return _agent_channel_work_response(
+                AGENT_CHANNEL_OUTCOME_COMMAND, ref.state, epoch,
+                _agent_channel_envelope(command, ref))
+
+    def verify_agent_channel_token(self, node_uuid, session_uuid,
+                                   execution_id, agent_token):
+        """Verify a presented agent token against one named session.
+
+        The session must exist for the node and must carry the execution
+        identity. The presented token is hashed with SHA256 and compared
+        with the session's stored verifier using a constant-time compare,
+        so a rejected token cannot be distinguished by timing. The
+        verifier never leaves the journal.
+        """
+        if agent_token is None:
+            return False
+        digest = hashlib.sha256(agent_token.encode('utf-8')).hexdigest()
+        with _session_for_read() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+            ref = (session.query(models.AgentChannelSession)
+                   .filter_by(uuid=session_uuid)
+                   .one_or_none())
+            if (ref is None or ref.node_id != node_id
+                    or ref.execution_id != execution_id):
+                return False
+            return hmac.compare_digest(digest, ref.token_verifier)
+
+    def find_agent_channel_session(self, node_uuid, agent_token):
+        """Find the session of the node whose verifier matches the token.
+
+        The reports endpoint names only the node; the session of the
+        reporter is identified by its token. Every session of the node is
+        a candidate: a superseded session keeps its late-report authority
+        until the revocation unit fences it.
+        """
+        if agent_token is None:
+            return None
+        digest = hashlib.sha256(agent_token.encode('utf-8')).hexdigest()
+        with _session_for_read() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+            refs = (session.query(models.AgentChannelSession)
+                    .filter_by(node_id=node_id).all())
+            for ref in refs:
+                if hmac.compare_digest(digest, ref.token_verifier):
+                    return ref.uuid
+            return None
+
+    @wrap_sqlite_retry
+    @oslo_db_api.retry_on_deadlock
+    def consume_agent_channel_command(self, node_uuid, session_uuid,
+                                      command_uuid, workflow_epoch, fence):
+        """Consume a stored agent channel reply under the current fence.
+
+        Consumption is the caller side of the rendezvous: a conductor holds
+        the exclusive Node reservation and waits for the correlated result.
+        Once the journal holds a committed result for the command, this
+        operation atomically marks the command consumed in one short write
+        transaction and returns the stored reply so the caller can complete
+        its Node-phase advance under the existing task fence. It is
+        idempotent: a repeated consume returns the identical stored reply
+        and never advances anything a second time.
+
+        The consume is fenced exactly like publication: a stale session,
+        fence, or epoch receives no consume and no duplicate advance, and a
+        caller of one node cannot reach into the journal of another node.
+        The consume touches no Node row, needs no Node-row lock, and needs
+        no TaskManager reservation beyond the caller's own.
+
+        :param node_uuid: UUID of the node whose channel is consumed.
+        :param session_uuid: UUID of the session that published the command.
+        :param command_uuid: UUID of the command with the committed reply.
+        :param workflow_epoch: Workflow epoch the caller believes is current.
+        :param fence: Fence generation the caller believes is current.
+        :returns: A dict with ``outcome`` ``reply`` and the consumed command
+                  dict under ``command``.
+        :raises: NodeNotFound if the node does not exist.
+        :raises: NotFound if the session or the command does not exist.
+        :raises: AgentChannelFenceConflict if the caller is stale.
+        :raises: AgentChannelCommandNotReady if the command has no stored
+                 result to consume.
+        """
+        with _session_for_write() as session:
+            node_id = _agent_channel_node_id(session, node_uuid)
+
+            ref = _require_agent_channel_session(session, session_uuid)
+
+            _check_agent_channel_fence(
+                session, node_id, ref, session_uuid, fence,
+                workflow_epoch)
+
+            # The head lock above serializes consumers, but it does not
+            # replace the snapshot that an earlier read in this transaction
+            # took. A plain read could answer with the queued state that a
+            # concurrent consumer already advanced. The locking read is a
+            # current read, and populate_existing refreshes an instance
+            # that this transaction already loaded.
+            command = (session.query(models.AgentChannelCommand)
+                       .filter_by(uuid=command_uuid,
+                                  session_uuid=session_uuid)
+                       .populate_existing()
+                       .with_for_update()
+                       .one_or_none())
+            if command is None:
+                raise exception.NotFound(
+                    _('Agent channel command %s could not be found.')
+                    % command_uuid)
+            if command.workflow_epoch != workflow_epoch:
+                raise exception.AgentChannelFenceConflict(
+                    session=session_uuid, fence=fence)
+
+            if command.state == AGENT_CHANNEL_COMMAND_CONSUMED:
+                # A retried consume returns the stored reply and the stored
+                # consumption state; nothing advances a second time.
+                return _agent_channel_reply_response(
+                    AGENT_CHANNEL_OUTCOME_REPLY,
+                    _agent_channel_command_dict(command))
+
+            if command.result is None:
+                # There is nothing to advance and nothing to return; the
+                # command stays queued and fetchable.
+                raise exception.AgentChannelCommandNotReady(
+                    command=command_uuid)
+
+            # A single conditional statement makes the queued-to-consumed
+            # transition atomic: a concurrent consumer cannot double-turn it.
+            updated = session.query(models.AgentChannelCommand).filter_by(
+                uuid=command_uuid, session_uuid=session_uuid,
+                state=AGENT_CHANNEL_COMMAND_QUEUED).update(
+                    {'state': AGENT_CHANNEL_COMMAND_CONSUMED,
+                     'updated_at': timeutils.utcnow()},
+                    synchronize_session=False)
+            if updated == 0:
+                # A concurrent consumer won between the check and the
+                # update; the stored body and its state are authoritative.
+                # Read that state with the same current, locked read: a
+                # plain read can still answer from a snapshot that the
+                # transaction took before the winning consumer committed.
+                command = (session.query(models.AgentChannelCommand)
+                           .filter_by(uuid=command_uuid,
+                                      session_uuid=session_uuid)
+                           .populate_existing()
+                           .with_for_update()
+                           .one())
+                if command.state != AGENT_CHANNEL_COMMAND_CONSUMED:
+                    raise exception.AgentChannelCommandNotReady(
+                        command=command_uuid)
+                return _agent_channel_reply_response(
+                    AGENT_CHANNEL_OUTCOME_REPLY,
+                    _agent_channel_command_dict(command))
+            session.refresh(command)
+            return _agent_channel_reply_response(
+                AGENT_CHANNEL_OUTCOME_REPLY,
+                _agent_channel_command_dict(command))
+
+    def wait_agent_channel_reply(self, node_uuid, session_uuid, command_uuid,
+                                 workflow_epoch, fence, timeout,
+                                 wake_hint=None, wait_interval=None):
+        """Wait for the committed reply of one command.
+
+        The caller may hold the exclusive Node reservation while it waits,
+        exactly as the reservation-safe wake contract requires. The wait
+        itself holds no Node reservation and no database transaction: every
+        journal read is a separate short read-only transaction, so a
+        concurrent report dispatcher can always commit and the reply is
+        visible to the next read. The wait uses a monotonic deadline;
+        repeated wake-ups never extend the deadline. Between reads the
+        optional ``wake_hint`` callback is given a chance to deliver a
+        notification hint; lost hints are safe because the durable journal
+        is the authority.
+
+        When the result is committed the wait consumes the command under
+        the presented fence and returns the stored reply. If the session is
+        superseded while the caller waits, the consume is fenced and the
+        wait returns no reply; the stored result stays in the journal for
+        the report-only acknowledgment path.
+
+        :param node_uuid: UUID of the node whose channel is waited on.
+        :param session_uuid: UUID of the session that published the command.
+        :param command_uuid: UUID of the command to wait on.
+        :param workflow_epoch: Workflow epoch the caller believes is current.
+        :param fence: Fence generation the caller believes is current.
+        :param timeout: Maximum seconds to wait under a monotonic deadline.
+        :param wake_hint: Optional zero-argument callable invoked between
+                          journal reads.
+        :param wait_interval: Seconds to rest between reads. The default is
+                              one second; an empty value lets the wake hint
+                              drive the loop.
+        :returns: A dict with ``outcome`` ``reply`` and the consumed command
+                  dict, or ``outcome`` ``no_reply`` with no command.
+        :raises: NodeNotFound if the node does not exist at wait start.
+        :raises: NotFound if the session or the command does not exist.
+        """
+        if timeout < 0:
+            timeout = 0
+        if wait_interval is None:
+            wait_interval = 1.0
+
+        with _session_for_read() as session:
+            _agent_channel_node_id(session, node_uuid)
+
+        deadline = time.monotonic() + timeout
+        found = False
+        # Inspect the durable journal at least once, even with a zero
+        # budget: a committed reply must be returned under the fence and an
+        # unknown command must raise even when there is no time left to wait.
+        while True:
+            with _session_for_read() as session:
+                ref = (session.query(models.AgentChannelCommand)
+                       .filter_by(uuid=command_uuid,
+                                  session_uuid=session_uuid)
+                       .one_or_none())
+            if ref is None:
+                raise exception.NotFound(
+                    _('Agent channel command %s could not be found.')
+                    % command_uuid)
+            if ref.result is not None:
+                found = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if wake_hint is not None:
+                wake_hint()
+                # Recompute after the hint: the callback may have consumed
+                # the whole budget.
+                remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if wait_interval > 0:
+                time.sleep(min(wait_interval, remaining))
+
+        if not found:
+            return _agent_channel_reply_response(
+                AGENT_CHANNEL_OUTCOME_NO_REPLY, None)
+
+        try:
+            return self.consume_agent_channel_command(
+                node_uuid, session_uuid, command_uuid, workflow_epoch, fence)
+        except exception.AgentChannelFenceConflict:
+            # The session was superseded while the caller waited: this wait
+            # gets no result and the journal is not consumed under a stale
+            # fence.
+            return _agent_channel_reply_response(
+                AGENT_CHANNEL_OUTCOME_NO_REPLY, None)

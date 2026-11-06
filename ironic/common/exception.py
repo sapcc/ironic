@@ -165,6 +165,36 @@ class InvalidState(Conflict):
     _msg_fmt = _("Invalid resource state.")
 
 
+class AgentChannelCommandConflict(Conflict):
+    # NOTE: The message must never carry parameter values. Only the stored
+    # command identity is safe to report.
+    _msg_fmt = _("An agent channel command is already published for command "
+                 "%(command)s; the command name, parameters, and reply "
+                 "boundary are immutable.")
+
+
+class AgentChannelFenceConflict(Conflict):
+    _msg_fmt = _("Agent channel session %(session)s is not the current "
+                 "session for its node or its fence %(fence)s is stale; the "
+                 "publisher holds no work authority.")
+
+
+class AgentChannelCommandNotReady(Conflict):
+    # NOTE: The message must never carry parameter values. Only the stored
+    # command identity is safe to report.
+    _msg_fmt = _("Agent channel command %(command)s has no committed result "
+                 "to consume; the reply must be stored in the journal "
+                 "before consumption advances anything.")
+
+
+class AgentChannelUnauthorized(IronicException):
+    # NOTE: The message must never name the node or the session. A rejected
+    # token reveals nothing about which journals exist.
+    code = http_client.UNAUTHORIZED
+    _msg_fmt = _("The presented agent token does not authenticate the agent "
+                 "channel.")
+
+
 class NodeAlreadyExists(Conflict):
     _msg_fmt = _("A node with UUID %(uuid)s already exists.")
 

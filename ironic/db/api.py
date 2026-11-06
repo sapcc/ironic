@@ -1712,3 +1712,240 @@ class Connection(object, metaclass=abc.ABCMeta):
         :param inspection_rule_id: ID of the inspection_rule to destroy.
         :raises: inspection_ruleNotFound if the inspection_rule does not exist.
         """
+
+    @abc.abstractmethod
+    def activate_agent_channel(self, node_uuid, execution_id, workflow_epoch,
+                               owner_conductor_id, owner_incarnation,
+                               token_verifier, profile):
+        """Activate an agent channel session for a node.
+
+        Activating a new execution process supersedes the node's previous
+        session atomically and raises the node's fence generation. Repeated
+        activation of the same ``(node, execution_id)`` is idempotent and
+        returns the existing session.
+
+        :param node_uuid: UUID of the node the agent runs on.
+        :param execution_id: Stable UUID of one agent execution process.
+        :param workflow_epoch: Workflow epoch the activation belongs to.
+        :param owner_conductor_id: Database ID of the owning conductor.
+        :param owner_incarnation: Incarnation of the owning conductor.
+        :param token_verifier: Verifier of the agent token, never the token.
+        :param profile: Immutable protocol profile of the session.
+        :returns: A session dict with at least ``uuid`` and ``fence``.
+        :raises: NodeNotFound if the node does not exist.
+        """
+
+    @abc.abstractmethod
+    def publish_agent_command(self, session_uuid, workflow_epoch,
+                              invocation_key, name, params, reply_boundary,
+                              owner_conductor_id, owner_incarnation, fence):
+        """Publish one command into the journal.
+
+        The command UUID and sequence are generated on first publication and
+        are stable for ``(session, workflow_epoch, invocation_key)``. A
+        repeat with the same frozen body returns the stored command.
+
+        :param session_uuid: UUID of the target agent channel session.
+        :param workflow_epoch: Workflow epoch of the command.
+        :param invocation_key: Stable identity of one command in the
+                               workflow.
+        :param name: IPA method name.
+        :param params: JSON object with the frozen method parameters.
+        :param reply_boundary: Reply boundary of the command.
+        :param owner_conductor_id: Database ID of the publishing conductor.
+        :param owner_incarnation: Incarnation of the publishing conductor.
+        :param fence: Fence generation the publisher believes is current.
+        :returns: A command dict.
+        :raises: NotFound if the session does not exist.
+        :raises: AgentChannelFenceConflict if the publisher is stale.
+        :raises: AgentChannelCommandConflict if the same invocation key
+                 already carries a different immutable body.
+        :raises: InvalidParameterValue if ``params`` is not JSON.
+        """
+
+    @abc.abstractmethod
+    def get_agent_channel_command(self, command_uuid):
+        """Raises NotFound if the command does not exist."""
+
+    @abc.abstractmethod
+    def report_agent_channel(self, session_uuid, reports):
+        """Ingest a bounded list of agent reports into the journal.
+
+        Each report entry is a dict with the keys ``command_id``,
+        ``workflow_epoch``, ``kind``, and ``payload``. The valid kinds are
+        ``receipt``, ``acceptance``, and ``result``. The journal stores the
+        payload in the command's report slot of that kind and returns one
+        acknowledgment dict per entry with ``command_id``, ``kind``, and
+        ``disposition``. Ingestion makes no Node update and no workflow
+        advance.
+
+        :param session_uuid: UUID of the reporting session.
+        :param reports: Bounded list of report entry dicts.
+        :returns: A list of acknowledgment dicts.
+        :raises: NotFound if the session does not exist.
+        :raises: InvalidParameterValue if the list is not a bounded list
+                 or an entry payload is not JSON.
+        """
+
+    @abc.abstractmethod
+    def report_agent_channel_batch(self, node_uuid, agent_token, reports):
+        """Ingest reports bound to their stored commands and sessions.
+
+        The reports route names only the node. The presented token must
+        authenticate the node credential for an empty batch or an entry
+        whose command is unknown. For a known command, the stored command's
+        session must also authenticate the same token. The route no longer
+        selects one arbitrary session of the node. Each entry must be a
+        JSON object with a string command ID and a JSON object payload.
+        All entries are validated before command lookup or the first
+        mutation. The whole batch commits or rolls back in one transaction.
+
+        :param node_uuid: UUID of the node the agent runs on.
+        :param agent_token: The token presented in X-Ironic-Agent-Token.
+        :param reports: Bounded list of report entry dicts.
+        :returns: A list of acknowledgment dicts.
+        :raises: NodeNotFound if the node does not exist.
+        :raises: AgentChannelUnauthorized if the token does not
+                 authenticate the node.
+        :raises: InvalidParameterValue if the list, an entry object, a
+                 command ID type, or an entry payload is invalid.
+        """
+
+    @abc.abstractmethod
+    def poll_agent_channel_work(self, node_uuid, session_uuid, execution_id,
+                                workflow_epoch):
+        """Resolve one agent work poll against the journal. Read-only.
+
+        Returns the session execution epoch, the session state, and one
+        outcome: ``command``, ``no_work``, ``not_ready``, or ``closed``. A
+        ``command`` outcome carries the envelope of the oldest queued
+        command of the session that has no stored receipt. The poll never
+        consumes a command, never advances the workflow, never mutates the
+        head or the session, and never touches the Node row. A superseded
+        session reads state ``draining`` and gets ``no_work``; a stale
+        epoch gets ``no_work`` with the current epoch; an unknown session,
+        a session of another node, a mismatched execution identity, and a
+        node without a channel get ``not_ready``.
+
+        :param node_uuid: UUID of the node whose channel is polled.
+        :param session_uuid: UUID of the polling session.
+        :param execution_id: Stable UUID of one agent execution process.
+        :param workflow_epoch: Workflow epoch the poller believes is current.
+        :returns: A poll result dict with the keys ``outcome``, ``state``,
+                  ``epoch``, ``command``, and ``retry_after``.
+        :raises: NodeNotFound if the node does not exist.
+        """
+
+    @abc.abstractmethod
+    def verify_agent_channel_token(self, node_uuid, session_uuid,
+                                   execution_id, agent_token):
+        """Verify a presented agent token against one named session.
+
+        The wire ``work`` request names its session and execution, so the
+        token authenticates that named pair. The session must belong to
+        the node and must carry the execution identity. The presented
+        token is hashed with SHA256 and compared with the session's stored
+        verifier using a constant-time compare. The verifier itself never
+        leaves the journal and is never returned.
+
+        :param node_uuid: UUID of the node the agent runs on.
+        :param session_uuid: UUID of the session the token must
+                             authenticate.
+        :param execution_id: Stable UUID of one agent execution process.
+        :param agent_token: The token presented in X-Ironic-Agent-Token.
+        :returns: True when the token authenticates the named session.
+        :raises: NodeNotFound if the node does not exist.
+        """
+
+    @abc.abstractmethod
+    def find_agent_channel_session(self, node_uuid, agent_token):
+        """Find the session whose verifier matches the presented token.
+
+        The wire ``reports`` request names only the node: the agent
+        submits a bounded list of entries that carry command IDs, so the
+        reporting session is identified by its token alone. Any session of
+        the node whose stored verifier matches is returned; a superseded
+        session keeps its late-report authority until a later revocation
+        unit fences it.
+
+        :param node_uuid: UUID of the node the agent runs on.
+        :param agent_token: The token presented in X-Ironic-Agent-Token.
+        :returns: The matching session UUID or None.
+        :raises: NodeNotFound if the node does not exist.
+        """
+
+    @abc.abstractmethod
+    def consume_agent_channel_command(self, node_uuid, session_uuid,
+                                      command_uuid, workflow_epoch, fence):
+        """Consume a stored agent channel reply under the current fence.
+
+        Consumption is the caller side of the rendezvous: a conductor holds
+        the exclusive Node reservation and waits for the correlated result.
+        Once the journal holds a committed result for the command, this
+        operation atomically marks the command consumed in one short write
+        transaction and returns the stored reply so the caller can complete
+        its Node-phase advance under the existing task fence. Consumption
+        is idempotent: a repeated consume of the same command returns the
+        identical stored reply and never advances anything a second time.
+
+        The consume is fenced like publication. A stale session, fence, or
+        epoch receives no consume and no duplicate advance, and a stale
+        caller cannot reach into the journal of another node.
+
+        The consume touches no Node row, needs no Node-row lock, and needs
+        no TaskManager reservation beyond the caller's own.
+
+        :param node_uuid: UUID of the node whose channel is consumed.
+        :param session_uuid: UUID of the session that published the command.
+        :param command_uuid: UUID of the command with the committed reply.
+        :param workflow_epoch: Workflow epoch the caller believes is current.
+        :param fence: Fence generation the caller believes is current.
+        :returns: A dict with ``outcome`` ``reply`` and the consumed command
+                  dict under ``command``. The command dict carries the
+                  stored report slots and ``state`` ``consumed``.
+        :raises: NodeNotFound if the node does not exist.
+        :raises: NotFound if the session or the command does not exist.
+        :raises: AgentChannelFenceConflict if the caller is stale; the
+                 command is then not consumed.
+        :raises: AgentChannelCommandNotReady if the command has no stored
+                 result to consume.
+        """
+
+    @abc.abstractmethod
+    def wait_agent_channel_reply(self, node_uuid, session_uuid, command_uuid,
+                                 workflow_epoch, fence, timeout,
+                                 wake_hint=None, wait_interval=None):
+        """Wait for the committed reply of one command.
+
+        The caller may hold the exclusive Node reservation while it waits.
+        The wait itself holds no Node reservation and no database
+        transaction: every journal read is a separate short read-only
+        transaction, so a concurrent report dispatcher can always commit.
+        The wait uses a monotonic deadline; repeated wake-ups never extend
+        the deadline. Between reads the optional ``wake_hint`` callback is
+        given a chance to deliver a notification hint; lost hints are safe
+        because the durable journal is the authority.
+
+        When the result is committed the wait consumes the command under the
+        presented fence and returns the stored reply. If the session is
+        superseded while the caller waits, the consume is fenced and the
+        wait returns no reply; the stored result remains available to the
+        report-only acknowledgment path.
+
+        :param node_uuid: UUID of the node whose channel is waited on.
+        :param session_uuid: UUID of the session that published the command.
+        :param command_uuid: UUID of the command to wait on.
+        :param workflow_epoch: Workflow epoch the caller believes is current.
+        :param fence: Fence generation the caller believes is current.
+        :param timeout: Maximum seconds to wait under a monotonic deadline.
+        :param wake_hint: Optional zero-argument callable invoked between
+                          journal reads.
+        :param wait_interval: Seconds to rest between reads. An empty value
+                              lets the wake hint drive the loop.
+        :returns: A dict with ``outcome`` ``reply`` and the consumed command
+                  dict, or ``outcome`` ``no_reply`` with no command when the
+                  deadline expired without a committed result or the session
+                  was superseded.
+        :raises: NodeNotFound if the node does not exist at wait start.
+        :raises: NotFound if the session or the command does not exist.
+        """
