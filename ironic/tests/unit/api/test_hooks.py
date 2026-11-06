@@ -20,13 +20,19 @@ from unittest import mock
 
 from oslo_config import cfg
 import oslo_messaging as messaging
+import webtest
 
+from ironic.api.controllers import base as api_base
 from ironic.api.controllers import root
+from ironic.api.controllers import v1 as api_v1
+from ironic.api.controllers.v1 import utils as api_utils
 from ironic.api import hooks
 from ironic.common import context
+from ironic.common import exception
 from ironic.common import policy
 from ironic.tests import base as tests_base
 from ironic.tests.unit.api import base
+from ironic.tests.unit.objects import utils as obj_utils
 
 
 class FakeRequest(object):
@@ -291,3 +297,83 @@ class TestPublicUrlHook(base.BaseApiTest):
         trusted_call_hook = hooks.PublicUrlHook()
         trusted_call_hook.before(reqstate)
         self.assertEqual('http://foo', reqstate.request.public_url)
+
+
+class TestAuditNodeIdentsHook(base.BaseApiTest):
+    """[ccloud] node name lookups as seen by the audit middleware."""
+
+    def setUp(self):
+        super(TestAuditNodeIdentsHook, self).setUp()
+        self.node = obj_utils.create_test_node(
+            self.context, name='node-1',
+            owner='97879042-c0bf-4216-882a-66a7cbf2bd74')
+        self.headers = {
+            api_base.Version.string: str(api_v1.max_version())}
+
+    def _idents_after(self, method, path, headers, **kwargs):
+        # look at the WSGI environ after the app returned, like the audit
+        # middleware wrapping the API does
+        captured = {}
+        inner = self.app.app
+
+        def wrapper(environ, start_response):
+            try:
+                return inner(environ, start_response)
+            finally:
+                captured.update(environ)
+
+        resp = getattr(webtest.TestApp(wrapper), method)(
+            '/v1' + path, headers=headers, expect_errors=True, **kwargs)
+        return resp.status_int, captured.get(
+            api_utils.NODE_IDENTS_ENVIRON_KEY)
+
+    def test_visible_node_by_name(self):
+        status, idents = self._idents_after('get', '/nodes/node-1',
+                                            self.headers)
+        self.assertEqual(http_client.OK, status)
+        self.assertEqual({'node-1': self.node.uuid}, idents)
+
+    def test_node_by_uuid(self):
+        status, idents = self._idents_after(
+            'get', '/nodes/%s' % self.node.uuid, self.headers)
+        self.assertEqual(http_client.OK, status)
+        self.assertIsNone(idents)
+
+    @mock.patch.object(policy, 'authorize', spec=True)
+    def _test_concealed(self, method, path, mock_authorize, **kwargs):
+        def authorize(rule, target, creds):
+            if rule in ('baremetal:node:get',
+                        'baremetal:node:get_allocation',
+                        'baremetal:allocation:delete'):
+                raise exception.HTTPForbidden(resource='fake')
+            return True
+        mock_authorize.side_effect = authorize
+        headers = dict(self.headers)
+        headers['X-Project-ID'] = '46c0bf8a-846d-49a5-9724-5a61a5efa6bf'
+        status, idents = self._idents_after(method, path, headers, **kwargs)
+        self.assertEqual(http_client.NOT_FOUND, status)
+        self.assertIsNone(idents)
+
+    def test_concealed_node_by_name(self):
+        self._test_concealed('get', '/nodes/node-1')
+
+    def test_concealed_node_states_by_name(self):
+        self._test_concealed('put_json', '/nodes/node-1/states/power',
+                             params={'target': 'power on'})
+
+    def test_concealed_node_allocation_by_name(self):
+        self._test_concealed('get', '/nodes/node-1/allocation')
+        self._test_concealed('delete', '/nodes/node-1/allocation')
+
+    @mock.patch.object(policy, 'authorize', spec=True)
+    def test_denied_action_on_visible_node_keeps_ident(self, mock_authorize):
+        def authorize(rule, target, creds):
+            if rule == 'baremetal:node:set_power_state':
+                raise exception.HTTPForbidden(resource='fake')
+            return True
+        mock_authorize.side_effect = authorize
+        status, idents = self._idents_after(
+            'put_json', '/nodes/node-1/states/power', self.headers,
+            params={'target': 'power on'})
+        self.assertEqual(http_client.FORBIDDEN, status)
+        self.assertEqual({'node-1': self.node.uuid}, idents)
