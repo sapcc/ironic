@@ -314,9 +314,15 @@ class AgentClient(object):
         url = self._get_command_url(node)
         LOG.debug('Fetching status of agent commands for node %s', node.uuid)
 
+        request_params = {}
+        agent_token = node.driver_internal_info.get('agent_secret_token')
+        if agent_token:
+            request_params['agent_token'] = agent_token
+
         def _get():
             try:
                 return self.session.get(url,
+                                        params=request_params,
                                         verify=self._get_verify(node),
                                         timeout=CONF.agent.command_timeout)
             except (requests.ConnectionError, requests.Timeout) as e:
@@ -336,7 +342,39 @@ class AgentClient(object):
                     CONF.agent.max_command_attempts),
                 reraise=True)(_get)
 
-        result = _get().json()['commands']
+        response = _get()
+        try:
+            result = response.json()
+        except ValueError:
+            msg = (_('Unable to decode response as JSON.\n'
+                     'Request URL: %(url)s\n'
+                     'Response status code: %(code)s\n'
+                     'Response: "%(response)s"') %
+                   {'url': url, 'code': response.status_code,
+                    'response': response.text})
+            LOG.error(msg)
+            raise exception.IronicException(msg)
+
+        if response.status_code >= http_client.BAD_REQUEST:
+            faultstring = result.get('faultstring', str(result))
+            LOG.error('Failed to get agent commands status for node '
+                      '%(node)s. Expected 2xx HTTP status code, got '
+                      '%(code)d. Agent response: %(error)s',
+                      {'node': node.uuid, 'code': response.status_code,
+                       'error': faultstring})
+            raise exception.AgentAPIError(node=node.uuid,
+                                          status=response.status_code,
+                                          error=faultstring)
+
+        if 'commands' not in result:
+            msg = (_('Agent returned unexpected response to '
+                     'get_commands_status for node %(node)s '
+                     '(missing "commands" key): %(result)s') %
+                   {'node': node.uuid, 'result': result})
+            LOG.error(msg)
+            raise exception.IronicException(msg)
+
+        result = result['commands']
         status = '; '.join('%(cmd)s: result "%(res)s", error "%(err)s"' %
                            {'cmd': r.get('command_name'),
                             'res': _sanitize_for_logging(

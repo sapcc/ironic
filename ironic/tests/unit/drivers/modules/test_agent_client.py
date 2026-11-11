@@ -560,8 +560,9 @@ class TestAgentClient(base.TestCase):
                               autospec=True).start()
         mock_get = self.client.session.get
 
-        res = mock.MagicMock(spec_set=['json'])
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
         res.json.return_value = {'commands': []}
+        res.status_code = 200
         mock_get.return_value = res
         self.assertEqual([], self.client.get_commands_status(self.node))
         agent_url = self.node.driver_internal_info.get('agent_url')
@@ -569,11 +570,12 @@ class TestAgentClient(base.TestCase):
             '%(agent_url)s/%(api_version)s/commands/' % {
                 'agent_url': agent_url,
                 'api_version': CONF.agent.agent_api_version},
-            verify=True, timeout=CONF.agent.command_timeout)
+            params={}, verify=True, timeout=CONF.agent.command_timeout)
 
     def test_get_commands_status_retries(self):
-        res = mock.MagicMock(spec_set=['json'])
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
         res.json.return_value = {'commands': []}
+        res.status_code = 200
         self.client.session.get.side_effect = [
             requests.ConnectionError('boom'),
             res
@@ -597,8 +599,9 @@ class TestAgentClient(base.TestCase):
                               autospec=True).start()
         mock_get = self.client.session.get
 
-        res = mock.MagicMock(spec_set=['json'])
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
         res.json.return_value = {'commands': []}
+        res.status_code = 200
         mock_get.return_value = res
         self.assertEqual([], self.client.get_commands_status(self.node))
         agent_url = self.node.driver_internal_info.get('agent_url')
@@ -606,8 +609,37 @@ class TestAgentClient(base.TestCase):
             '%(agent_url)s/%(api_version)s/commands/' % {
                 'agent_url': agent_url,
                 'api_version': CONF.agent.agent_api_version},
-            verify='/path/to/agent.crt',
+            params={}, verify='/path/to/agent.crt',
             timeout=CONF.agent.command_timeout)
+
+    def test_get_commands_status_with_token(self):
+        self.node.driver_internal_info['agent_secret_token'] = 'secrettoken'
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
+        res.json.return_value = {'commands': []}
+        res.status_code = 200
+        self.client.session.get.return_value = res
+        self.assertEqual([], self.client.get_commands_status(self.node))
+        self.client.session.get.assert_called_once_with(
+            mock.ANY,
+            params={'agent_token': 'secrettoken'},
+            verify=mock.ANY, timeout=mock.ANY)
+
+    def test_get_commands_status_error_response(self):
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
+        res.json.return_value = {'faultcode': 'Client',
+                                 'faultstring': '401 Unauthorized: Token invalid.'}
+        res.status_code = 401
+        self.client.session.get.return_value = res
+        self.assertRaises(exception.AgentAPIError,
+                          self.client.get_commands_status, self.node)
+
+    def test_get_commands_status_missing_commands_key(self):
+        res = mock.MagicMock(spec_set=['json', 'status_code'])
+        res.json.return_value = {'unexpected': 'response'}
+        res.status_code = 200
+        self.client.session.get.return_value = res
+        self.assertRaises(exception.IronicException,
+                          self.client.get_commands_status, self.node)
 
     def _test_install_bootloader(self, root_uuid, efi_system_part_uuid=None,
                                  prep_boot_part_uuid=None):
