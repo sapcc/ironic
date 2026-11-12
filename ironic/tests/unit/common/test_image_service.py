@@ -44,7 +44,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.service.validate_href(self.href)
         path_mock.assert_not_called()
         head_mock.assert_called_once_with(self.href, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         response.status_code = http_client.NO_CONTENT
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -63,7 +63,7 @@ class HttpImageServiceTestCase(base.TestCase):
         response.status_code = http_client.OK
         self.service.validate_href(self.href)
         head_mock.assert_called_once_with(self.href, verify=False,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         response.status_code = http_client.NO_CONTENT
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -81,7 +81,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.validate_href, self.href)
         head_mock.assert_called_once_with(self.href, verify=False,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         head_mock.side_effect = requests.RequestException()
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -95,7 +95,7 @@ class HttpImageServiceTestCase(base.TestCase):
         response.status_code = http_client.OK
         self.service.validate_href(self.href)
         head_mock.assert_called_once_with(self.href, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         response.status_code = http_client.NO_CONTENT
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -114,7 +114,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.validate_href, self.href)
         head_mock.assert_called_once_with(self.href, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         head_mock.side_effect = requests.RequestException()
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -129,7 +129,7 @@ class HttpImageServiceTestCase(base.TestCase):
 
         self.service.validate_href(self.href)
         head_mock.assert_called_once_with(self.href, verify='/some/path',
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         response.status_code = http_client.NO_CONTENT
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -156,7 +156,8 @@ class HttpImageServiceTestCase(base.TestCase):
 
         self.service.validate_href(self.href)
         head_mock.assert_called_once_with(self.href, verify='/some/path',
-                                          timeout=60, auth=auth_creds,
+                                          timeout=5,
+                                          auth=auth_creds,
                                           allow_redirects=True)
         response.status_code = http_client.NO_CONTENT
         self.assertRaises(exception.ImageRefValidationFailed,
@@ -180,7 +181,7 @@ class HttpImageServiceTestCase(base.TestCase):
 
     @mock.patch.object(requests, 'head', autospec=True)
     def test_validate_href_custom_timeout(self, head_mock):
-        cfg.CONF.set_override('webserver_connection_timeout', 15)
+        cfg.CONF.set_override('webserver_verify_timeout', 15)
 
         response = head_mock.return_value
         response.status_code = http_client.OK
@@ -207,7 +208,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.validate_href, self.href)
         head_mock.assert_called_once_with(self.href, verify='/some/path',
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
 
     @mock.patch.object(requests, 'head', autospec=True)
@@ -217,7 +218,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.validate_href, self.href)
         head_mock.assert_called_once_with(self.href, verify='/some/path',
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
 
     @mock.patch.object(requests, 'head', autospec=True)
@@ -227,7 +228,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.validate_href, self.href)
         head_mock.assert_called_once_with(self.href, verify='/some/path',
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
 
     @mock.patch.object(requests, 'head', autospec=True)
@@ -241,7 +242,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertIn('secreturl', str(e))
         self.assertNotIn(self.href, str(e))
         head_mock.assert_called_once_with(self.href, verify=False,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
 
     @mock.patch.object(requests, 'head', autospec=True)
@@ -253,7 +254,7 @@ class HttpImageServiceTestCase(base.TestCase):
         url = self.href + '/'
         resp = self.service.validate_href(url)
         head_mock.assert_called_once_with(url, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         self.assertEqual(http_client.FORBIDDEN, resp.status_code)
 
@@ -313,6 +314,49 @@ class HttpImageServiceTestCase(base.TestCase):
             self.service.gen_auth_from_conf_user_pass(self.href)
         self.assertIsNone(return_auth)
 
+    def test_gen_auth_from_conf_user_pass_host_permitted(self):
+        cfg.CONF.set_override('image_server_auth_strategy',
+                              'http_basic', 'deploy')
+        cfg.CONF.set_override('image_server_password',
+                              'SpongeBob', 'deploy')
+        cfg.CONF.set_override('image_server_user',
+                              'SquarePants', 'deploy')
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['127.0.0.1'], 'deploy')
+        return_auth = \
+            self.service.gen_auth_from_conf_user_pass(self.href)
+        expected = requests.auth.HTTPBasicAuth(
+            'SquarePants', 'SpongeBob')
+        self.assertEqual(expected, return_auth)
+
+    def test_gen_auth_from_conf_user_pass_host_denied(self):
+        cfg.CONF.set_override('image_server_auth_strategy',
+                              'http_basic', 'deploy')
+        cfg.CONF.set_override('image_server_password',
+                              'SpongeBob', 'deploy')
+        cfg.CONF.set_override('image_server_user',
+                              'SquarePants', 'deploy')
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['trusted.example.com'], 'deploy')
+        return_auth = \
+            self.service.gen_auth_from_conf_user_pass(self.href)
+        self.assertIsNone(return_auth)
+
+    def test_gen_auth_from_conf_user_pass_hosts_empty(self):
+        cfg.CONF.set_override('image_server_auth_strategy',
+                              'http_basic', 'deploy')
+        cfg.CONF.set_override('image_server_password',
+                              'SpongeBob', 'deploy')
+        cfg.CONF.set_override('image_server_user',
+                              'SquarePants', 'deploy')
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        return_auth = \
+            self.service.gen_auth_from_conf_user_pass(self.href)
+        expected = requests.auth.HTTPBasicAuth(
+            'SquarePants', 'SpongeBob')
+        self.assertEqual(expected, return_auth)
+
     @mock.patch.object(requests, 'head', autospec=True)
     def _test_show(self, head_mock, mtime, mtime_date):
         head_mock.return_value.status_code = http_client.OK
@@ -322,7 +366,7 @@ class HttpImageServiceTestCase(base.TestCase):
         }
         result = self.service.show(self.href)
         head_mock.assert_called_once_with(self.href, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         self.assertEqual({'size': 100, 'updated_at': mtime_date,
                           'properties': {}, 'no_cache': False}, result)
@@ -349,7 +393,7 @@ class HttpImageServiceTestCase(base.TestCase):
         }
         result = self.service.show(self.href)
         head_mock.assert_called_once_with(self.href, verify=True,
-                                          timeout=60, auth=None,
+                                          timeout=5, auth=None,
                                           allow_redirects=True)
         self.assertEqual({
             'size': 100,
@@ -374,7 +418,7 @@ class HttpImageServiceTestCase(base.TestCase):
         self.assertRaises(exception.ImageRefValidationFailed,
                           self.service.show, self.href)
         head_mock.assert_called_with(self.href, verify=True,
-                                     timeout=60, auth=None,
+                                     timeout=5, auth=None,
                                      allow_redirects=True)
 
     @mock.patch.object(requests, 'get', autospec=True)
@@ -1306,7 +1350,240 @@ class ServiceGetterTestCase(base.TestCase):
         res = image_service.get_image_service_auth_override(test_node)
         self.assertIsNone(res)
 
+    def test_get_image_service_auth_override_config_fallback(self):
+        """Test fallback to CONF.deploy.image_server_user/password."""
+        cfg.CONF.set_override('image_server_user', 'config_user', 'deploy')
+        cfg.CONF.set_override('image_server_password', 'config_pass',
+                              'deploy')
+        test_node = mock.Mock()
+        test_node.instance_info = {}
+        test_node.driver_info = {}
+        res = image_service.get_image_service_auth_override(test_node)
+        self.assertDictEqual({'username': 'config_user',
+                              'password': 'config_pass'}, res)
+
+    def test_get_image_service_auth_override_config_fallback_oci_host(self):
+        """Config fallback is sent when the oci host is permitted."""
+        cfg.CONF.set_override('image_server_user', 'config_user', 'deploy')
+        cfg.CONF.set_override('image_server_password', 'config_pass',
+                              'deploy')
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['registry.example.com'], 'deploy')
+        test_node = mock.Mock()
+        test_node.instance_info = {
+            'image_source': 'oci://registry.example.com/img@sha256:'
+                            + 'a' * 64}
+        test_node.driver_info = {}
+        res = image_service.get_image_service_auth_override(test_node)
+        self.assertDictEqual({'username': 'config_user',
+                              'password': 'config_pass'}, res)
+
+    def test_get_image_service_auth_override_config_fallback_oci_denied(self):
+        """Config fallback is withheld when the oci host is not permitted."""
+        cfg.CONF.set_override('image_server_user', 'config_user', 'deploy')
+        cfg.CONF.set_override('image_server_password', 'config_pass',
+                              'deploy')
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['registry.example.com'], 'deploy')
+        test_node = mock.Mock()
+        test_node.instance_info = {
+            'image_source': 'oci://evil.attacker.com/img@sha256:'
+                            + 'a' * 64}
+        test_node.driver_info = {}
+        res = image_service.get_image_service_auth_override(test_node)
+        self.assertIsNone(res)
+
     def test_is_container_registry_url(self):
         self.assertFalse(image_service.is_container_registry_url(None))
         self.assertFalse(image_service.is_container_registry_url('https://'))
         self.assertTrue(image_service.is_container_registry_url('oci://.'))
+
+
+class IsHostAuthPermittedTestCase(base.TestCase):
+
+    def test_empty_list_permits_all(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'http://any.host.example.com/image'))
+
+    def test_host_in_list_permitted(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.example.com/fedora.qcow2'))
+
+    def test_host_not_in_list_denied(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'], 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://evil.attacker.com/image'))
+
+    def test_file_scheme_always_permitted(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'file:///tmp/image.qcow2'))
+
+    def test_no_hostname_denied(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'], 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'http:///path/only'))
+
+    def test_multiple_hosts_in_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['img1.example.com',
+                               'img2.example.com'],
+                              'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://img2.example.com/fedora.qcow2'))
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://img3.example.com/fedora.qcow2'))
+
+    def test_domain_suffix_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.example.com/fedora.qcow2'))
+
+    def test_domain_suffix_nested_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://a.b.example.com/fedora.qcow2'))
+
+    def test_domain_suffix_no_bare_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://example.com/fedora.qcow2'))
+
+    def test_domain_suffix_no_partial_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://notexample.com/fedora.qcow2'))
+
+    def test_mixed_exact_and_suffix(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['exact.host.com',
+                               '.internal'],
+                              'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://exact.host.com/image'))
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.internal/image'))
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://other.external.com/image'))
+
+    def test_permit_unknown_hosts_true_no_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        cfg.CONF.set_override(
+            'image_server_auth_permit_unknown_hosts',
+            True, 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'http://any.host.example.com/image'))
+
+    def test_permit_unknown_hosts_false_no_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        cfg.CONF.set_override(
+            'image_server_auth_permit_unknown_hosts',
+            False, 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'http://any.host.example.com/image'))
+
+    def test_permit_unknown_hosts_false_with_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'],
+                              'deploy')
+        cfg.CONF.set_override(
+            'image_server_auth_permit_unknown_hosts',
+            False, 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.example.com/fedora.qcow2'))
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://evil.attacker.com/image'))
+
+    def test_port_is_ignored_for_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['images.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.example.com:8080/fedora.qcow2'))
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'https://evil.attacker.com:8080/image'))
+
+    def test_port_is_ignored_for_suffix_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'https://images.example.com:8080/fedora.qcow2'))
+
+    def test_oci_host_in_list_permitted(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['registry.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'oci://registry.example.com/project/img@sha256:'
+                + 'a' * 64))
+
+    def test_oci_host_not_in_list_denied(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['registry.example.com'], 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'oci://evil.attacker.com/project/img@sha256:'
+                + 'a' * 64))
+
+    def test_oci_domain_suffix_match(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              ['.example.com'], 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'oci://registry.example.com/project/img@sha256:'
+                + 'a' * 64))
+
+    def test_oci_permit_unknown_hosts_false_no_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        cfg.CONF.set_override(
+            'image_server_auth_permit_unknown_hosts',
+            False, 'deploy')
+        self.assertFalse(
+            image_service.is_host_auth_permitted(
+                'oci://registry.example.com/project/img@sha256:'
+                + 'a' * 64))
+
+    def test_oci_permit_unknown_hosts_true_no_list(self):
+        cfg.CONF.set_override('image_server_auth_hosts',
+                              [], 'deploy')
+        cfg.CONF.set_override(
+            'image_server_auth_permit_unknown_hosts',
+            True, 'deploy')
+        self.assertTrue(
+            image_service.is_host_auth_permitted(
+                'oci://registry.example.com/project/img@sha256:'
+                + 'a' * 64))
