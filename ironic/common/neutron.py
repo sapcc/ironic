@@ -404,7 +404,7 @@ def add_ports_to_network(task, network_uuid, security_groups=None):
                     client, update_port_attrs['binding:host_id'])
             port = client.create_port(**port_attrs)
             port = update_neutron_port(task.context, port.id,
-                                       update_port_attrs)
+                                       update_port_attrs, client=client)
             if CONF.neutron.dhcpv6_stateful_address_count > 1:
                 _add_ip_addresses_for_ipv6_stateful(task.context, port, client)
 
@@ -590,7 +590,7 @@ def get_neutron_port_data(port_id, vif_id, client=None, context=None,
     """
 
     if not client:
-        client = get_client(context=context)
+        client = get_client(context=context, auth_from_config=True)
 
     try:
         port_config = client.get_port(vif_id)
